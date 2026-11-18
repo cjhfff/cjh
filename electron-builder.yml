@@ -1,0 +1,20 @@
+appId: dev.cjh.desktop
+productName: cjh
+electronDist: node_modules/electron/dist
+npmRebuild: false
+asar: true
+directories:
+  output: dist-portable
+files:
+  - out/**/*
+  - package.json
+extraResources:
+  - from: resources/bin
+    to: bin
+win:
+  signAndEditExecutable: false
+  target:
+    - target: zip
+      arch:
+        - x64
+artifactName: ${productName}-${version}-portable-${arch}.${ext}

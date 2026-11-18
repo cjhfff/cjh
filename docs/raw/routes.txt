@@ -1,0 +1,1070 @@
+# 827 routes
+
+## /__alma_go (78)
+POST   /__alma_go/activity/control
+POST   /__alma_go/activity/memory-push
+POST   /__alma_go/activity/state
+POST   /__alma_go/agents/tasks
+POST   /__alma_go/bun/path
+POST   /__alma_go/capture-host
+POST   /__alma_go/chat-send
+POST   /__alma_go/chrome-relay
+POST   /__alma_go/completions/persist-image
+POST   /__alma_go/completions/prepare
+POST   /__alma_go/computer-use/activity
+POST   /__alma_go/computer-use/daemon
+POST   /__alma_go/computer-use/shutdown
+POST   /__alma_go/cron
+POST   /__alma_go/crystal
+POST   /__alma_go/discord-route
+POST   /__alma_go/discord-rt
+POST   /__alma_go/email
+POST   /__alma_go/email-sync
+POST   /__alma_go/feishu
+POST   /__alma_go/handoff
+POST   /__alma_go/heartbeat
+POST   /__alma_go/herdr/b88
+POST   /__alma_go/herdr/mutes
+POST   /__alma_go/herdr/pane-cwd
+POST   /__alma_go/herdr/rpc
+POST   /__alma_go/herdr/transcript
+POST   /__alma_go/hooks
+POST   /__alma_go/image/generate
+POST   /__alma_go/image/plugin-models
+POST   /__alma_go/local-embeddings
+POST   /__alma_go/mcp-event
+POST   /__alma_go/mcp-oauth
+POST   /__alma_go/mcp-state
+POST   /__alma_go/memory-embedding
+POST   /__alma_go/memory-rebuild-progress
+POST   /__alma_go/memory-sleep-node
+POST   /__alma_go/memory-status
+POST   /__alma_go/mobile-push
+POST   /__alma_go/mobile-relay
+POST   /__alma_go/mobile-relay-rt
+POST   /__alma_go/personal-host
+POST   /__alma_go/phone-seen
+POST   /__alma_go/plugin-fetch
+POST   /__alma_go/plugin-models
+POST   /__alma_go/plugin-providers
+POST   /__alma_go/plugins
+POST   /__alma_go/presentations/model
+POST   /__alma_go/presentations/preview
+POST   /__alma_go/project-card
+POST   /__alma_go/providers-written
+POST   /__alma_go/proxy/api-type
+POST   /__alma_go/proxy/json-error
+POST   /__alma_go/proxy/prepare
+POST   /__alma_go/rearview
+POST   /__alma_go/rearview/chain
+POST   /__alma_go/refs-effect
+POST   /__alma_go/refs-search-runtime
+POST   /__alma_go/remote-hosts-dispose
+POST   /__alma_go/remote-hosts-report
+POST   /__alma_go/remote-hosts-status
+POST   /__alma_go/secrets-written
+POST   /__alma_go/settings-written
+POST   /__alma_go/skills-effect
+POST   /__alma_go/skills-env
+POST   /__alma_go/skills-remote-scan
+POST   /__alma_go/team-host-rt
+POST   /__alma_go/team-read
+POST   /__alma_go/team-write
+POST   /__alma_go/telegram-rt
+POST   /__alma_go/terminal
+POST   /__alma_go/threads-rt
+POST   /__alma_go/todos
+POST   /__alma_go/tool-cookies
+POST   /__alma_go/tts
+POST   /__alma_go/usage-pricing
+POST   /__alma_go/voice-pending
+POST   /__alma_go/weixin
+
+## /anthropic-proxy (1)
+POST   /anthropic-proxy/:providerId/v1/messages
+
+## /api/activity-recorder (21)
+DELETE /api/activity-recorder/sessions/:id
+GET    /api/activity-recorder/config
+GET    /api/activity-recorder/digest
+GET    /api/activity-recorder/permissions
+GET    /api/activity-recorder/report/:dateKey
+GET    /api/activity-recorder/search/keyword
+GET    /api/activity-recorder/search/semantic
+GET    /api/activity-recorder/sessions
+GET    /api/activity-recorder/sessions/:id
+GET    /api/activity-recorder/snapshot-file
+GET    /api/activity-recorder/status
+GET    /api/activity-recorder/suggestions
+GET    /api/activity-recorder/summary/daily/:dateKey
+GET    /api/activity-recorder/summary/weekly/:weekKey
+POST   /api/activity-recorder/permissions/open
+POST   /api/activity-recorder/sessions/:id/analyze
+POST   /api/activity-recorder/start
+POST   /api/activity-recorder/stop
+POST   /api/activity-recorder/summary/daily/:dateKey
+POST   /api/activity-recorder/summary/weekly/:endDateKey
+PUT    /api/activity-recorder/config
+
+## /api/agents (3)
+GET    /api/agents
+GET    /api/agents/tasks/:taskId
+POST   /api/agents/tasks/:taskId/resume
+
+## /api/alma (1)
+GET    /api/alma/vitals
+
+## /api/attachments (3)
+GET    /api/attachments/resolve-path
+POST   /api/attachments/file
+POST   /api/attachments/image
+
+## /api/browser-relay (1)
+GET    /api/browser-relay/config
+
+## /api/bun (5)
+DELETE /api/bun/executions/:id
+GET    /api/bun/executions/:id
+GET    /api/bun/status
+POST   /api/bun/execute
+POST   /api/bun/install
+
+## /api/channels (2)
+GET    /api/channels/:platform
+POST   /api/channels/telegram/clear-inactive
+
+## /api/chat (6)
+POST   /api/chat/:chatId/send-audio
+POST   /api/chat/:chatId/send-document
+POST   /api/chat/:chatId/send-photo
+POST   /api/chat/:chatId/send-video
+POST   /api/chat/:chatId/send-voice
+POST   /api/chat/completions
+
+## /api/chrome-relay (20)
+GET    /api/chrome-relay/extension-path
+GET    /api/chrome-relay/status
+GET    /api/chrome-relay/token
+POST   /api/chrome-relay/back
+POST   /api/chrome-relay/click
+POST   /api/chrome-relay/detach
+POST   /api/chrome-relay/detach-all
+POST   /api/chrome-relay/eval
+POST   /api/chrome-relay/forward
+POST   /api/chrome-relay/launch-chrome
+POST   /api/chrome-relay/navigate
+POST   /api/chrome-relay/read
+POST   /api/chrome-relay/read-dom
+POST   /api/chrome-relay/screenshot
+POST   /api/chrome-relay/scroll
+POST   /api/chrome-relay/tabs
+POST   /api/chrome-relay/tabs/create
+POST   /api/chrome-relay/token/regenerate
+POST   /api/chrome-relay/type
+POST   /api/chrome-relay/upload
+
+## /api/claude-subscription (5)
+DELETE /api/claude-subscription/tokens
+GET    /api/claude-subscription/profile
+GET    /api/claude-subscription/quota
+GET    /api/claude-subscription/status
+POST   /api/claude-subscription/tokens
+
+## /api/cloud-sync (4)
+GET    /api/cloud-sync/state
+POST   /api/cloud-sync/disable
+POST   /api/cloud-sync/enable
+POST   /api/cloud-sync/push-snapshot
+
+## /api/computer-use (30)
+DELETE /api/computer-use/approvals/:bundle
+GET    /api/computer-use/action_log
+GET    /api/computer-use/approvals
+GET    /api/computer-use/apps
+GET    /api/computer-use/check_approval
+GET    /api/computer-use/permissions
+GET    /api/computer-use/ping
+GET    /api/computer-use/status
+POST   /api/computer-use/action_log
+POST   /api/computer-use/approvals
+POST   /api/computer-use/click
+POST   /api/computer-use/drag
+POST   /api/computer-use/get_app_state
+POST   /api/computer-use/grant
+POST   /api/computer-use/launch_app
+POST   /api/computer-use/lens
+POST   /api/computer-use/list_apps
+POST   /api/computer-use/perform_secondary_action
+POST   /api/computer-use/press
+POST   /api/computer-use/press_key
+POST   /api/computer-use/raise
+POST   /api/computer-use/scroll
+POST   /api/computer-use/select_text
+POST   /api/computer-use/set_value
+POST   /api/computer-use/shot
+POST   /api/computer-use/shutdown
+POST   /api/computer-use/snap
+POST   /api/computer-use/type
+POST   /api/computer-use/type_text
+POST   /api/computer-use/windows
+
+## /api/copilot (3)
+DELETE /api/copilot/accounts/:id
+GET    /api/copilot/accounts
+POST   /api/copilot/accounts
+
+## /api/cron (8)
+DELETE /api/cron/jobs/:id
+GET    /api/cron/jobs
+GET    /api/cron/jobs/:id
+GET    /api/cron/jobs/:id/runs
+POST   /api/cron/jobs
+POST   /api/cron/jobs/:id/run
+POST   /api/cron/jobs/:id/toggle
+PUT    /api/cron/jobs/:id
+
+## /api/crystal (16)
+GET    /api/crystal/:id
+GET    /api/crystal/:id/validate
+GET    /api/crystal/bundles
+GET    /api/crystal/config
+GET    /api/crystal/overview
+POST   /api/crystal/:id/cancel
+POST   /api/crystal/:id/confirm
+POST   /api/crystal/:id/dormant
+POST   /api/crystal/:id/material
+POST   /api/crystal/:id/prefill
+POST   /api/crystal/:id/slot
+POST   /api/crystal/:id/type
+POST   /api/crystal/bundles
+POST   /api/crystal/seeds
+PUT    /api/crystal/:id/checklist
+PUT    /api/crystal/config
+
+## /api/custom-themes (5)
+DELETE /api/custom-themes/:id
+GET    /api/custom-themes
+GET    /api/custom-themes/:id
+POST   /api/custom-themes
+PUT    /api/custom-themes/:id
+
+## /api/data (4)
+GET    /api/data/export
+GET    /api/data/storage
+POST   /api/data/import
+POST   /api/data/reclaim
+
+## /api/discord (10)
+DELETE /api/discord/channels/:channelId/messages/:messageId
+GET    /api/discord/channels/:channelId/messages
+GET    /api/discord/servers
+GET    /api/discord/stickers
+POST   /api/discord/channels/:channelId/send
+POST   /api/discord/channels/:channelId/send-file
+POST   /api/discord/channels/:channelId/send-photo
+POST   /api/discord/channels/:channelId/sticker
+POST   /api/discord/dm
+POST   /api/discord/reaction
+
+## /api/email (11)
+DELETE /api/email/accounts/:id
+GET    /api/email/accounts
+GET    /api/email/inbox
+GET    /api/email/inbox/:id
+POST   /api/email/accounts
+POST   /api/email/accounts/:id/check
+POST   /api/email/accounts/test
+POST   /api/email/inbox/:id/send
+PUT    /api/email/accounts/:id
+PUT    /api/email/inbox/:id/draft
+PUT    /api/email/inbox/:id/status
+
+## /api/feishu (9)
+GET    /api/feishu/connect/state
+GET    /api/feishu/status
+POST   /api/feishu/chats/:chatId/send
+POST   /api/feishu/connect/cancel
+POST   /api/feishu/connect/start
+POST   /api/feishu/disconnect
+POST   /api/feishu/messages/:messageId/reaction
+POST   /api/feishu/send-file
+POST   /api/feishu/send-photo
+
+## /api/files-abs (1)
+GET    /api/files-abs
+
+## /api/files-abs-binary (1)
+GET    /api/files-abs-binary
+
+## /api/fs (1)
+GET    /api/fs/browse
+
+## /api/gallery (4)
+DELETE /api/gallery/images
+DELETE /api/gallery/images/:id
+GET    /api/gallery/images
+GET    /api/gallery/images/:id
+
+## /api/generative-ui (1)
+POST   /api/generative-ui/document
+
+## /api/github (1)
+GET    /api/github/status
+
+## /api/groups (7)
+POST   /api/groups/:chatId/leave
+POST   /api/groups/:chatId/pin
+POST   /api/groups/:chatId/send
+POST   /api/groups/:chatId/send-document
+POST   /api/groups/:chatId/send-photo
+POST   /api/groups/:chatId/send-video
+POST   /api/groups/:chatId/unpin
+
+## /api/health (1)
+GET    /api/health
+
+## /api/heartbeat (3)
+GET    /api/heartbeat/config
+GET    /api/heartbeat/status
+PUT    /api/heartbeat/config
+
+## /api/herdr (27)
+DELETE /api/herdr/live-activity
+GET    /api/herdr/chat
+GET    /api/herdr/commands
+GET    /api/herdr/computers
+GET    /api/herdr/dirs
+GET    /api/herdr/file
+GET    /api/herdr/files
+GET    /api/herdr/files/binary
+GET    /api/herdr/files/content
+GET    /api/herdr/image/:name
+GET    /api/herdr/info
+GET    /api/herdr/mutes
+GET    /api/herdr/setup
+GET    /api/herdr/subagent
+GET    /api/herdr/workspaces
+POST   /api/herdr/answer
+POST   /api/herdr/dirs
+POST   /api/herdr/follow
+POST   /api/herdr/open-url
+POST   /api/herdr/restart-agent
+POST   /api/herdr/rpc
+POST   /api/herdr/setup/install
+POST   /api/herdr/setup/start
+POST   /api/herdr/task
+POST   /api/herdr/upload
+PUT    /api/herdr/live-activity
+PUT    /api/herdr/mutes
+
+## /api/hooks (5)
+GET    /api/hooks
+GET    /api/hooks/path
+POST   /api/hooks/app-will-quit
+POST   /api/hooks/reload
+PUT    /api/hooks
+
+## /api/iab (35)
+GET    /api/iab/envs
+GET    /api/iab/host
+GET    /api/iab/pip/frame
+GET    /api/iab/profiles
+GET    /api/iab/status
+POST   /api/iab/back
+POST   /api/iab/cdp
+POST   /api/iab/click
+POST   /api/iab/clipboard
+POST   /api/iab/cua
+POST   /api/iab/dialog
+POST   /api/iab/dom-click
+POST   /api/iab/dom-type
+POST   /api/iab/download
+POST   /api/iab/download-media
+POST   /api/iab/eval
+POST   /api/iab/export
+POST   /api/iab/export-gsuite
+POST   /api/iab/fetch
+POST   /api/iab/forward
+POST   /api/iab/get-visible-dom
+POST   /api/iab/history
+POST   /api/iab/info
+POST   /api/iab/locator
+POST   /api/iab/navigate
+POST   /api/iab/pip/:action
+POST   /api/iab/read
+POST   /api/iab/read-dom
+POST   /api/iab/reload
+POST   /api/iab/screenshot
+POST   /api/iab/scroll
+POST   /api/iab/type
+POST   /api/iab/upload
+POST   /api/iab/viewport
+POST   /api/iab/{*path}
+
+## /api/image (2)
+GET    /api/image/models
+POST   /api/image/generate
+
+## /api/local-embeddings (4)
+DELETE /api/local-embeddings/models/:modelId
+GET    /api/local-embeddings/models
+GET    /api/local-embeddings/progress
+POST   /api/local-embeddings/download
+
+## /api/mcp-client (10)
+DELETE /api/mcp-client/resources/subscribe
+GET    /api/mcp-client/resource-templates
+GET    /api/mcp-client/resources
+GET    /api/mcp-client/resources/:serverName
+GET    /api/mcp-client/status
+GET    /api/mcp-client/tools
+POST   /api/mcp-client/reconnect/:name
+POST   /api/mcp-client/refresh
+POST   /api/mcp-client/resources/read
+POST   /api/mcp-client/resources/subscribe
+
+## /api/mcp-marketplace (1)
+GET    /api/mcp-marketplace
+
+## /api/mcp-servers (10)
+DELETE /api/mcp-servers/:id
+DELETE /api/mcp-servers/:id/oauth
+GET    /api/mcp-servers
+GET    /api/mcp-servers/:id
+GET    /api/mcp-servers/:id/oauth/flow
+GET    /api/mcp-servers/:id/oauth/status
+POST   /api/mcp-servers
+POST   /api/mcp-servers/:id/oauth/cancel
+POST   /api/mcp-servers/:id/oauth/start
+PUT    /api/mcp-servers/:id
+
+## /api/memories (20)
+DELETE /api/memories
+DELETE /api/memories/:id
+GET    /api/memories
+GET    /api/memories/:id
+GET    /api/memories/archive
+GET    /api/memories/embedding-model
+GET    /api/memories/rebuild-progress
+GET    /api/memories/sleep/runs
+GET    /api/memories/sleep/status
+GET    /api/memories/stats
+GET    /api/memories/status
+POST   /api/memories
+POST   /api/memories/archive/:id/restore
+POST   /api/memories/cancel-rebuild
+POST   /api/memories/rebuild
+POST   /api/memories/search
+POST   /api/memories/sleep/cancel
+POST   /api/memories/sleep/preview
+POST   /api/memories/sleep/run
+PUT    /api/memories/:id
+
+## /api/messages (5)
+DELETE /api/messages/:messageId
+GET    /api/messages/:messageId/trace
+POST   /api/messages/:messageId/reactions
+POST   /api/messages/:messageId/rollback
+POST   /api/messages/:messageId/switch-version
+
+## /api/mobile (3)
+DELETE /api/mobile/push-devices/:token
+GET    /api/mobile/push-devices
+POST   /api/mobile/push-devices
+
+## /api/mobile-relay (11)
+DELETE /api/mobile-relay/phones/:id
+GET    /api/mobile-relay/oauth-callback
+GET    /api/mobile-relay/status
+POST   /api/mobile-relay/connect-account
+POST   /api/mobile-relay/disable
+POST   /api/mobile-relay/e2e
+POST   /api/mobile-relay/enable
+POST   /api/mobile-relay/lan-firewall/allow
+POST   /api/mobile-relay/reconnect
+POST   /api/mobile-relay/regenerate
+POST   /api/mobile-relay/token
+
+## /api/models (1)
+GET    /api/models
+
+## /api/native-power (1)
+POST   /api/native-power
+
+## /api/people (8)
+DELETE /api/people/:name
+DELETE /api/people/:name/avatar
+GET    /api/people
+GET    /api/people/:name
+GET    /api/people/:name/avatar
+POST   /api/people/:name/avatar
+POST   /api/people/from-team
+PUT    /api/people/:name
+
+## /api/personal (14)
+GET    /api/personal
+GET    /api/personal/approvals
+GET    /api/personal/runs
+GET    /api/personal/runs/:id
+POST   /api/personal/approvals/:id
+POST   /api/personal/dispatch
+POST   /api/personal/inbound
+POST   /api/personal/notifications/check
+POST   /api/personal/notifications/open-access
+POST   /api/personal/progress
+POST   /api/personal/send
+POST   /api/personal/stop
+PUT    /api/personal/main
+PUT    /api/personal/settings
+
+## /api/pip (7)
+GET    /api/pip/frame
+GET    /api/pip/state
+POST   /api/pip/computer-use-activity
+POST   /api/pip/hide
+POST   /api/pip/invalidate
+POST   /api/pip/move
+POST   /api/pip/present
+
+## /api/plan (11)
+DELETE /api/plan
+GET    /api/plan
+GET    /api/plan/block
+POST   /api/plan
+POST   /api/plan/archive
+POST   /api/plan/blocked
+POST   /api/plan/claim
+POST   /api/plan/reset
+POST   /api/plan/resolve
+POST   /api/plan/review
+POST   /api/plan/submit
+
+## /api/plan-mode (3)
+GET    /api/plan-mode
+POST   /api/plan-mode/enter
+POST   /api/plan-mode/exit
+
+## /api/plugin-sign-in (3)
+GET    /api/plugin-sign-in/prompts
+POST   /api/plugin-sign-in/prompts/:id/cancel
+POST   /api/plugin-sign-in/prompts/:id/complete
+
+## /api/plugin-themes (4)
+GET    /api/plugin-themes
+GET    /api/plugin-themes/:id
+POST   /api/plugin-themes/:id/apply
+POST   /api/plugin-themes/clear
+
+## /api/plugins (20)
+DELETE /api/plugins/:id
+GET    /api/plugins
+GET    /api/plugins/:id
+GET    /api/plugins/:id/permissions
+GET    /api/plugins/:id/settings
+GET    /api/plugins/commands
+GET    /api/plugins/ui-host
+GET    /api/plugins/updates
+GET    /api/plugins/updates/known
+POST   /api/plugins
+POST   /api/plugins/:id/disable
+POST   /api/plugins/:id/enable
+POST   /api/plugins/:id/update
+POST   /api/plugins/execute-command
+POST   /api/plugins/progress/cancel
+POST   /api/plugins/refresh
+POST   /api/plugins/respond
+POST   /api/plugins/statusbar/execute
+PUT    /api/plugins/:id/permissions
+PUT    /api/plugins/:id/settings
+
+## /api/plugins-path (1)
+GET    /api/plugins-path
+
+## /api/presentations (2)
+POST   /api/presentations/model
+POST   /api/presentations/preview
+
+## /api/project-suggestions (5)
+GET    /api/project-suggestions
+GET    /api/project-suggestions/:id
+POST   /api/project-suggestions/:id/accept
+POST   /api/project-suggestions/:id/dismiss
+POST   /api/project-suggestions/:id/revise
+
+## /api/prompt-app-executions (2)
+DELETE /api/prompt-app-executions/:id
+GET    /api/prompt-app-executions/:id
+
+## /api/prompt-apps (8)
+DELETE /api/prompt-apps/:id
+GET    /api/prompt-apps
+GET    /api/prompt-apps/:id
+GET    /api/prompt-apps/:id/executions
+POST   /api/prompt-apps
+POST   /api/prompt-apps/:id/execute
+PUT    /api/prompt-apps/:id
+PUT    /api/prompt-apps/reorder
+
+## /api/prompts (6)
+DELETE /api/prompts/:id
+GET    /api/prompts
+GET    /api/prompts/:id
+POST   /api/prompts
+PUT    /api/prompts/:id
+PUT    /api/prompts/reorder
+
+## /api/providers (13)
+DELETE /api/providers/:id
+DELETE /api/providers/:id/accounts/:accountId
+GET    /api/providers
+GET    /api/providers/:id/accounts
+GET    /api/providers/:id/models
+POST   /api/providers
+POST   /api/providers/:id/authenticate
+POST   /api/providers/:id/logout
+POST   /api/providers/:id/models/fetch
+POST   /api/providers/:id/refresh-quotas
+POST   /api/providers/:id/test
+PUT    /api/providers/:id
+PUT    /api/providers/:id/models
+
+## /api/ptc (1)
+GET    /api/ptc/stats
+
+## /api/reaction (1)
+POST   /api/reaction/set
+
+## /api/rearview (6)
+GET    /api/rearview/entries
+GET    /api/rearview/entry/:id
+GET    /api/rearview/stats
+GET    /api/rearview/status
+POST   /api/rearview/ack
+POST   /api/rearview/freeze
+
+## /api/refs (33)
+DELETE /api/refs/scratch/:id
+DELETE /api/refs/snippets/:id
+GET    /api/refs/backlinks
+GET    /api/refs/context
+GET    /api/refs/date-calendar
+GET    /api/refs/graph
+GET    /api/refs/kinds
+GET    /api/refs/outlinks
+GET    /api/refs/recent
+GET    /api/refs/recipes
+GET    /api/refs/related
+GET    /api/refs/resolve
+GET    /api/refs/scratch
+GET    /api/refs/search
+GET    /api/refs/snippets
+GET    /api/refs/time-clues
+GET    /api/refs/time-clues/days
+PATCH  /api/refs/snippets/:id
+POST   /api/refs/backlink-counts
+POST   /api/refs/link
+POST   /api/refs/open
+POST   /api/refs/recipes/state
+POST   /api/refs/reindex
+POST   /api/refs/resolve
+POST   /api/refs/scratch
+POST   /api/refs/scratch/:id/promote
+POST   /api/refs/snippets
+POST   /api/refs/snippets/from-turns
+POST   /api/refs/time-clues/ignore
+POST   /api/refs/time-clues/seen
+POST   /api/refs/time-index
+POST   /api/refs/translate
+POST   /api/refs/unlink
+
+## /api/remote-hosts (6)
+DELETE /api/remote-hosts/:id
+GET    /api/remote-hosts
+GET    /api/remote-hosts/:id/browse
+GET    /api/remote-hosts/ssh-config
+POST   /api/remote-hosts
+POST   /api/remote-hosts/:id/test
+
+## /api/remote-launch (1)
+POST   /api/remote-launch
+
+## /api/rtk (1)
+GET    /api/rtk/stats
+
+## /api/search (1)
+GET    /api/search/threads
+
+## /api/secrets (3)
+DELETE /api/secrets/:name
+GET    /api/secrets
+POST   /api/secrets
+
+## /api/settings (6)
+GET    /api/settings
+POST   /api/settings/detect-telegram-users
+POST   /api/settings/reset
+POST   /api/settings/test-proxy
+POST   /api/settings/test-telegram
+PUT    /api/settings
+
+## /api/simulators (2)
+GET    /api/simulators
+POST   /api/simulators/:udid/:action
+
+## /api/skills (5)
+DELETE /api/skills/:id
+GET    /api/skills
+GET    /api/skills/:id
+POST   /api/skills/refresh
+PUT    /api/skills/:id
+
+## /api/skills-path (1)
+GET    /api/skills-path
+
+## /api/support (4)
+DELETE /api/support/session/:id
+GET    /api/support/exports/:kind
+POST   /api/support/session
+POST   /api/support/session/:id/message
+
+## /api/system (4)
+GET    /api/system/fonts
+GET    /api/system/installed-apps
+GET    /api/system/installed-apps/icon
+GET    /api/system/site-icon
+
+## /api/team (30)
+DELETE /api/team/drafts
+DELETE /api/team/host/channels/:id
+GET    /api/team/channels
+GET    /api/team/channels/:id/messages
+GET    /api/team/drafts
+GET    /api/team/files/:name
+GET    /api/team/host/invites
+GET    /api/team/host/members
+GET    /api/team/me
+GET    /api/team/members
+GET    /api/team/ping
+GET    /api/team/policy
+GET    /api/team/search
+GET    /api/team/status
+POST   /api/team/channels/:id/submit
+POST   /api/team/drafts
+POST   /api/team/host/channels
+POST   /api/team/host/channels/share
+POST   /api/team/host/disable
+POST   /api/team/host/enable
+POST   /api/team/host/invites
+POST   /api/team/host/members/:id/revoke
+POST   /api/team/host/relay/sign-in
+POST   /api/team/join
+POST   /api/team/leave
+POST   /api/team/me
+PUT    /api/team/host/channels/:id/archived
+PUT    /api/team/host/relay
+PUT    /api/team/me
+PUT    /api/team/policy
+
+## /api/terminal (6)
+DELETE /api/terminal/:id
+GET    /api/terminal/:id/output
+GET    /api/terminal/sessions
+POST   /api/terminal/:id/input
+POST   /api/terminal/create
+POST   /api/terminal/exec
+
+## /api/test-workspace-route (1)
+GET    /api/test-workspace-route
+
+## /api/themes (1)
+GET    /api/themes
+
+## /api/thread-briefs (4)
+GET    /api/thread-briefs/:threadId
+GET    /api/thread-briefs/config
+POST   /api/thread-briefs/backfill
+PUT    /api/thread-briefs/config
+
+## /api/thread-labels (6)
+DELETE /api/thread-labels/:id
+GET    /api/thread-labels
+GET    /api/thread-labels/:id
+POST   /api/thread-labels
+PUT    /api/thread-labels/:id
+PUT    /api/thread-labels/reorder
+
+## /api/threads (34)
+DELETE /api/threads/:id
+DELETE /api/threads/:id/goal
+DELETE /api/threads/:id/loop
+GET    /api/threads
+GET    /api/threads/:id
+GET    /api/threads/:id/goal
+GET    /api/threads/:id/loop
+GET    /api/threads/:threadId/agent-crew
+GET    /api/threads/:threadId/context-usage
+GET    /api/threads/:threadId/diff-stats
+GET    /api/threads/:threadId/file-writes
+GET    /api/threads/:threadId/messages
+GET    /api/threads/:threadId/missions/:missionId/harness
+GET    /api/threads/:threadId/providers/:providerId/acp-commands
+GET    /api/threads/:threadId/subagent-messages
+GET    /api/threads/:threadId/subagents/live
+GET    /api/threads/:threadId/traces
+POST   /api/threads
+POST   /api/threads/:id/activate
+POST   /api/threads/:id/branch
+POST   /api/threads/:id/compact
+POST   /api/threads/:id/regenerate-title
+POST   /api/threads/:id/switch
+POST   /api/threads/:threadId/inject-test-message
+POST   /api/threads/:threadId/notify
+POST   /api/threads/:threadId/send-document
+POST   /api/threads/:threadId/send-photo
+POST   /api/threads/:threadId/send-voice
+POST   /api/threads/archive
+POST   /api/threads/batch-delete
+PUT    /api/threads/:id
+PUT    /api/threads/:id/goal
+PUT    /api/threads/:id/loop
+PUT    /api/threads/:id/sidebar-pin
+
+## /api/todos (2)
+GET    /api/todos
+POST   /api/todos
+
+## /api/tool-cookies (3)
+DELETE /api/tool-cookies
+GET    /api/tool-cookies
+POST   /api/tool-cookies
+
+## /api/tool-group-summary (1)
+POST   /api/tool-group-summary
+
+## /api/tool-model (3)
+GET    /api/tool-model
+GET    /api/tool-model/memory
+POST   /api/tool-model/test
+
+## /api/tools (2)
+GET    /api/tools/list
+POST   /api/tools/invoke
+
+## /api/tts (16)
+GET    /api/tts/local-status
+GET    /api/tts/speech/engines
+GET    /api/tts/speech/events
+GET    /api/tts/speech/model-status
+POST   /api/tts/generate
+POST   /api/tts/setup
+POST   /api/tts/speech/delete-model
+POST   /api/tts/speech/engines/:id/cancel
+POST   /api/tts/speech/engines/:id/install
+POST   /api/tts/speech/engines/:id/remove
+POST   /api/tts/speech/ensure-model
+POST   /api/tts/speech/prewarm
+POST   /api/tts/speech/reference-voice
+POST   /api/tts/speech/split
+POST   /api/tts/speech/synthesize
+POST   /api/tts/test
+
+## /api/update (5)
+GET    /api/update/status
+POST   /api/update/check
+POST   /api/update/download
+POST   /api/update/install
+POST   /api/update/native-host
+
+## /api/usage (3)
+GET    /api/usage/migration-status
+GET    /api/usage/stats
+POST   /api/usage/start-migration
+
+## /api/voice (1)
+POST   /api/voice/send
+
+## /api/voice-notes (1)
+POST   /api/voice-notes
+
+## /api/weixin (3)
+GET    /api/weixin/qrcode
+GET    /api/weixin/status
+POST   /api/weixin/logout
+
+## /api/whisper (3)
+DELETE /api/whisper/models/:modelId
+GET    /api/whisper/models
+POST   /api/whisper/models/:modelId/download
+
+## /api/window-capture (2)
+POST   /api/window-capture
+POST   /api/window-capture/native-host
+
+## /api/workspaces (79)
+DELETE /api/workspaces/:id
+DELETE /api/workspaces/:id/files/{*filePath}
+DELETE /api/workspaces/:id/git/branch
+DELETE /api/workspaces/:id/git/worktrees
+DELETE /api/workspaces/:id/project-card/consult
+GET    /api/workspaces
+GET    /api/workspaces/:id
+GET    /api/workspaces/:id/favicon
+GET    /api/workspaces/:id/files
+GET    /api/workspaces/:id/files-binary/{*filePath}
+GET    /api/workspaces/:id/files/{*filePath}
+GET    /api/workspaces/:id/git/branches
+GET    /api/workspaces/:id/git/commit/:hash
+GET    /api/workspaces/:id/git/conflicts
+GET    /api/workspaces/:id/git/diff
+GET    /api/workspaces/:id/git/diff-stats
+GET    /api/workspaces/:id/git/is-repo
+GET    /api/workspaces/:id/git/log
+GET    /api/workspaces/:id/git/rebase/status
+GET    /api/workspaces/:id/git/remotes
+GET    /api/workspaces/:id/git/stash
+GET    /api/workspaces/:id/git/status
+GET    /api/workspaces/:id/git/worktrees
+GET    /api/workspaces/:id/github/ci-logs
+GET    /api/workspaces/:id/github/pr
+GET    /api/workspaces/:id/github/pr/:number
+GET    /api/workspaces/:id/github/pr/refresh
+GET    /api/workspaces/:id/pinned-references
+GET    /api/workspaces/:id/preview/detect
+GET    /api/workspaces/:id/preview/html-files
+GET    /api/workspaces/:id/preview/status
+GET    /api/workspaces/:id/project-card
+GET    /api/workspaces/:id/project-card/consult
+POST   /api/workspaces
+POST   /api/workspaces/:id/files/copy
+POST   /api/workspaces/:id/files/mkdir
+POST   /api/workspaces/:id/files/move
+POST   /api/workspaces/:id/files/rename
+POST   /api/workspaces/:id/files/touch
+POST   /api/workspaces/:id/git/checkout
+POST   /api/workspaces/:id/git/commit
+POST   /api/workspaces/:id/git/conflicts/resolve
+POST   /api/workspaces/:id/git/conflicts/resolve-ai
+POST   /api/workspaces/:id/git/conflicts/resolve-all-ai
+POST   /api/workspaces/:id/git/create-branch
+POST   /api/workspaces/:id/git/discard
+POST   /api/workspaces/:id/git/fetch
+POST   /api/workspaces/:id/git/generate-commit-message
+POST   /api/workspaces/:id/git/init
+POST   /api/workspaces/:id/git/pull
+POST   /api/workspaces/:id/git/push
+POST   /api/workspaces/:id/git/rebase
+POST   /api/workspaces/:id/git/rebase/abort
+POST   /api/workspaces/:id/git/rebase/continue
+POST   /api/workspaces/:id/git/stage
+POST   /api/workspaces/:id/git/stage-all
+POST   /api/workspaces/:id/git/stash/apply
+POST   /api/workspaces/:id/git/stash/drop
+POST   /api/workspaces/:id/git/stash/pop
+POST   /api/workspaces/:id/git/stash/push
+POST   /api/workspaces/:id/git/unstage
+POST   /api/workspaces/:id/git/unstage-all
+POST   /api/workspaces/:id/git/worktrees
+POST   /api/workspaces/:id/github/pr
+POST   /api/workspaces/:id/github/pr/:number/checkout
+POST   /api/workspaces/:id/github/pr/close
+POST   /api/workspaces/:id/github/pr/merge
+POST   /api/workspaces/:id/preview/start
+POST   /api/workspaces/:id/preview/stop
+POST   /api/workspaces/:id/project-card/consult
+POST   /api/workspaces/:id/project-card/draft
+POST   /api/workspaces/:id/project-card/propose
+POST   /api/workspaces/:id/project-card/resolve-proposal
+POST   /api/workspaces/:id/worktree/cleanup
+PUT    /api/workspaces/:id
+PUT    /api/workspaces/:id/files/{*filePath}
+PUT    /api/workspaces/:id/pinned-references
+PUT    /api/workspaces/:id/project-card
+PUT    /api/workspaces/:id/project-config
+
+## /api/worktrunk (2)
+GET    /api/worktrunk/status
+POST   /api/worktrunk/install
+
+## /assistants (1)
+POST   /assistants
+
+## /audio (3)
+POST   /audio/speech
+POST   /audio/transcriptions
+POST   /audio/translations
+
+## /batches (1)
+POST   /batches
+
+## /chat (1)
+POST   /chat/completions
+
+## /chatkit (1)
+POST   /chatkit/sessions
+
+## /completions (1)
+POST   /completions
+
+## /containers (1)
+POST   /containers
+
+## /conversations (1)
+POST   /conversations
+
+## /embeddings (1)
+POST   /embeddings
+
+## /evals (1)
+POST   /evals
+
+## /files (1)
+POST   /files
+
+## /fine_tuning (3)
+POST   /fine_tuning/alpha/graders/run
+POST   /fine_tuning/alpha/graders/validate
+POST   /fine_tuning/jobs
+
+## /iab-rtc-bridge (1)
+GET    /iab-rtc-bridge
+
+## /images (3)
+POST   /images/edits
+POST   /images/generations
+POST   /images/variations
+
+## /mcp (1)
+GET    /mcp/oauth/callback
+
+## /moderations (1)
+POST   /moderations
+
+## /proxy (2)
+POST   /proxy/:providerId/responses
+POST   /proxy/:providerId/v1/responses
+
+## /realtime (3)
+POST   /realtime/client_secrets
+POST   /realtime/sessions
+POST   /realtime/transcription_sessions
+
+## /responses (3)
+POST   /responses
+POST   /responses/compact
+POST   /responses/input_tokens
+
+## /skills (1)
+POST   /skills
+
+## /threads (2)
+POST   /threads
+POST   /threads/runs
+
+## /uploads (1)
+POST   /uploads
+
+## /vector_stores (1)
+POST   /vector_stores
+
+## /videos (1)
+POST   /videos
