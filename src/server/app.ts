@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process'
 import { writeFileSync, readFileSync, existsSync, readdirSync, statSync } from 'node:fs'
-import { dirname, extname, join, relative, resolve, sep } from 'node:path'
+import { dirname, extname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Context, Hono } from 'hono'
 import { cors } from 'hono/cors'
@@ -11,6 +11,7 @@ import {
   CronJobUpsertSchema,
   DataImportRequestSchema,
   McpServerUpsertSchema,
+  MemoryUpsertSchema,
   PromptTemplateUpsertSchema,
   ProviderUpsertSchema,
   SettingsPatchSchema,
@@ -25,10 +26,14 @@ import { WsHub } from './ws-hub'
 import { GenerationEngine } from './engine/generation-engine'
 import { AcpAgentManager } from './acp/manager'
 import { McpHub } from './mcp/hub'
+import { MemoryStore } from './memory/store'
+import { PermissionGate } from './permissions/gate'
 import { SkillsScanner } from './skills/scanner'
 import { PortableUpdater } from './updater/portable-updater'
 import { CronScheduler, computeNextRunAt, parseCronExpression, validateTimezone } from './cron/scheduler'
+import { FeishuBridge } from './channels/feishu'
 import { fetchProviderRemoteModels, testApiProviderConnection } from './providers/ai-provider'
+import { resolveSafeWorkspacePath } from './tools/workspace-fs'
 
 export interface ServerContext {
   paths: AppPaths
@@ -37,12 +42,15 @@ export interface ServerContext {
   logger: TaggedLogger
   db: AppDatabase
   wsHub: WsHub
+  permissionGate: PermissionGate
   acpManager: AcpAgentManager
   mcpHub: McpHub
   skillsScanner: SkillsScanner
+  memoryStore: MemoryStore
   engine: GenerationEngine
   updater: PortableUpdater
   cronScheduler: CronScheduler
+  feishuBridge?: FeishuBridge
   requestUpdateInstall?: (opts?: { dryRun?: boolean }) => Promise<boolean> | boolean
 }
 
@@ -144,6 +152,13 @@ export function createHttpApp(ctx: ServerContext): Hono {
     const parsed = SettingsPatchSchema.parse(body)
     const updated = ctx.db.updateSettings(parsed)
     ctx.wsHub.broadcast('settings_updated', updated)
+    if (parsed.channels?.feishu && ctx.feishuBridge) {
+      if (updated.channels.feishu.enabled && updated.channels.feishu.appId && updated.channels.feishu.hasAppSecret) {
+        void ctx.feishuBridge.reconnect()
+      } else if (parsed.channels.feishu.enabled === false) {
+        void ctx.feishuBridge.disconnect()
+      }
+    }
     return c.json(updated)
   })
 
@@ -451,7 +466,7 @@ export function createHttpApp(ctx: ServerContext): Hono {
   app.get('/api/threads/:id/messages', c => {
     const id = c.req.param('id')
     const messages = ctx.db.getActiveBranchMessages(id)
-    const pendingPermissions = ctx.acpManager.getPendingPermissionsForThread(id)
+    const pendingPermissions = ctx.permissionGate.getPendingPermissionsForThread(id)
     return c.json({ messages, pendingPermissions })
   })
 
@@ -482,16 +497,6 @@ export function createHttpApp(ctx: ServerContext): Hono {
 
   // ==================== Thread Workspace Readonly Panel (B7) ====================
 
-  const resolveSafeWorkspacePath = (workspaceRoot: string, relInput: string): string | null => {
-    const root = resolve(workspaceRoot)
-    const cleanRel = relInput.replace(/^[/\\]+/, '')
-    const target = resolve(root, cleanRel)
-    if (target !== root && !target.startsWith(root + sep)) {
-      return null
-    }
-    return target
-  }
-
   app.get('/api/threads/:id/workspace/tree', c => {
     const id = c.req.param('id')
     const thread = ctx.db.getThread(id)
@@ -507,7 +512,12 @@ export function createHttpApp(ctx: ServerContext): Hono {
 
     const root = resolve(thread.workspacePath)
     const entries = readdirSync(targetDir, { withFileTypes: true })
-      .filter(e => e.name !== '.git' && e.name !== 'node_modules')
+      .filter(
+        e =>
+          e.name !== '.git' &&
+          e.name !== 'node_modules' &&
+          Boolean(resolveSafeWorkspacePath(root, join(targetDir, e.name)))
+      )
       .slice(0, 300)
       .map(e => {
         const full = join(targetDir, e.name)
@@ -659,11 +669,23 @@ export function createHttpApp(ctx: ServerContext): Hono {
   app.post('/api/threads/:id/generate', async c => {
     const threadId = c.req.param('id')
     const body = await c.req.json()
+    const wait = c.req.query('wait') === '1' || Boolean(body?.wait)
     const parsed = WsClientMessageSchema.parse({
       type: 'generate_response',
       data: { ...body, threadId }
     })
     if (parsed.type === 'generate_response') {
+      if (wait) {
+        const res = await ctx.engine.startTurn(parsed.data)
+        const msg = res.messageId ? ctx.db.getMessageById(res.messageId) : null
+        const text = msg
+          ? msg.message.parts
+              .filter(p => p.type === 'text')
+              .map(p => (p as { type: 'text'; text: string }).text)
+              .join('\n')
+          : ''
+        return c.json({ accepted: true, threadId, ...res, text, message: msg })
+      }
       ctx.engine.steerOrGenerate(parsed.data)
     }
     return c.json({ accepted: true, threadId })
@@ -745,7 +767,7 @@ export function createHttpApp(ctx: ServerContext): Hono {
     const requestId = c.req.param('requestId')
     const body = (await c.req.json()) as { optionId?: string }
     if (!body.optionId) return c.json({ error: 'Missing optionId' }, 400)
-    const ok = ctx.acpManager.resolvePermission(requestId, body.optionId)
+    const ok = ctx.permissionGate.resolvePermission(requestId, body.optionId)
     return c.json({ ok })
   })
 
@@ -795,6 +817,13 @@ export function createHttpApp(ctx: ServerContext): Hono {
 
   app.post('/api/skills/refresh', c => {
     return c.json(ctx.skillsScanner.scan())
+  })
+
+  app.get('/api/skills/:id/content', c => {
+    const id = decodeURIComponent(c.req.param('id'))
+    const res = ctx.skillsScanner.getContent(id)
+    if (!res) return c.json({ error: 'Skill not found' }, 404)
+    return c.json(res)
   })
 
   app.put('/api/skills/:id', async c => {
@@ -910,6 +939,106 @@ export function createHttpApp(ctx: ServerContext): Hono {
     if (!existing) return c.json({ error: 'Cron job not found' }, 404)
     const limit = Math.min(200, Math.max(1, Number(c.req.query('limit') || '50')))
     return c.json(ctx.db.listCronRuns(id, limit))
+  })
+
+  // ==================== Memories (R4) ====================
+
+  app.get('/api/memories', c => {
+    const q = c.req.query('q')?.trim()
+    if (q) {
+      const limit = Math.min(100, Math.max(1, Number(c.req.query('limit') || '50')))
+      return c.json(ctx.memoryStore.search(q, limit))
+    }
+    return c.json(ctx.memoryStore.list())
+  })
+
+  app.get('/api/memories/search', c => {
+    const q = c.req.query('q') || ''
+    const limit = Math.min(100, Math.max(1, Number(c.req.query('limit') || '20')))
+    return c.json(ctx.memoryStore.search(q, limit))
+  })
+
+  app.get('/api/memories/:id', c => {
+    const mem = ctx.memoryStore.get(c.req.param('id'))
+    if (!mem) return c.json({ error: 'Memory not found' }, 404)
+    return c.json(mem)
+  })
+
+  app.post('/api/memories', async c => {
+    const input = MemoryUpsertSchema.parse(await c.req.json())
+    const created = ctx.memoryStore.create(input)
+    ctx.wsHub.broadcast('memories_updated', created)
+    return c.json(created, 201)
+  })
+
+  app.put('/api/memories/:id', async c => {
+    const id = c.req.param('id')
+    const body = await c.req.json()
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return c.json({ error: 'Request body must be a JSON object' }, 400)
+    }
+    const existing = ctx.memoryStore.get(id)
+    if (!existing) return c.json({ error: 'Memory not found' }, 404)
+    const parsed = MemoryUpsertSchema.parse({
+      title: existing.title,
+      content: existing.content,
+      tags: existing.tags,
+      sourceThreadId: existing.sourceThreadId,
+      ...(body as Record<string, unknown>)
+    })
+    const updated = ctx.memoryStore.update(id, parsed)
+    ctx.wsHub.broadcast('memories_updated', updated)
+    return c.json(updated)
+  })
+
+  app.delete('/api/memories/:id', c => {
+    const id = c.req.param('id')
+    const ok = ctx.memoryStore.delete(id)
+    if (ok) ctx.wsHub.broadcast('memories_updated', { id, deleted: true })
+    return c.json({ ok })
+  })
+
+  // ==================== Channels / Feishu Bridge (R3) ====================
+
+  app.get('/api/channels/feishu/status', c => {
+    if (!ctx.feishuBridge) {
+      return c.json({ error: 'Feishu bridge not initialized' }, 503)
+    }
+    return c.json(ctx.feishuBridge.getStatus())
+  })
+
+  app.post('/api/channels/feishu/connect', async c => {
+    if (!ctx.feishuBridge) {
+      return c.json({ error: 'Feishu bridge not initialized' }, 503)
+    }
+    return c.json(await ctx.feishuBridge.connect())
+  })
+
+  app.post('/api/channels/feishu/disconnect', async c => {
+    if (!ctx.feishuBridge) {
+      return c.json({ error: 'Feishu bridge not initialized' }, 503)
+    }
+    return c.json(await ctx.feishuBridge.disconnect())
+  })
+
+  app.post('/api/channels/feishu/reconnect', async c => {
+    if (!ctx.feishuBridge) {
+      return c.json({ error: 'Feishu bridge not initialized' }, 503)
+    }
+    return c.json(await ctx.feishuBridge.reconnect())
+  })
+
+  app.get('/api/channels/feishu/mappings', c => {
+    return c.json(ctx.db.listChannelMappings('feishu'))
+  })
+
+  app.delete('/api/channels/feishu/mappings/:id', c => {
+    const ok = ctx.db.deleteChannelMapping(c.req.param('id'))
+    return c.json({ ok })
+  })
+
+  app.get('/api/channels/feishu/chats', c => {
+    return c.json(ctx.db.listKnownFeishuChats())
   })
 
   // Serve built renderer UI on `/` and `/assets/*` for local webview / headless preview

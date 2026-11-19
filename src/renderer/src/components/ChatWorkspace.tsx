@@ -1196,8 +1196,18 @@ export function ChatWorkspace({ sendWs, sidebarOpen }: Props) {
               {regularThreads.length === 0 &&
               attentionThreads.length === 0 &&
               pinnedThreads.length === 0 ? (
-                <div className="px-3 py-8 text-center text-xs text-[var(--text-muted)] leading-relaxed">
-                  {t('sidebar.emptyThreads')}
+                <div className="px-3 py-8 text-center space-y-3">
+                  <div className="text-xs text-[var(--text-muted)] leading-relaxed">
+                    {t('sidebar.emptyThreads')}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => createThreadMut.mutate()}
+                    className="px-3.5 py-1.5 rounded-xl bg-[var(--accent)] text-[var(--accent-fg)] text-xs font-medium inline-flex items-center gap-1.5 hover:opacity-90 transition shadow-sm"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>{t('sidebar.emptyNewThreadCta')}</span>
+                  </button>
                 </div>
               ) : (
                 regularThreads.map(renderThreadItem)
@@ -2108,6 +2118,30 @@ export function ChatWorkspace({ sendWs, sidebarOpen }: Props) {
                     </div>
                   )}
                 </div>
+
+                {activeThread && !isAcpModel && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      updateThreadMut.mutate({
+                        builtinToolsEnabled: activeThread.builtinToolsEnabled === false
+                      })
+                    }
+                    className={`h-8 px-2.5 rounded-lg border text-xs inline-flex items-center gap-1.5 transition ${
+                      activeThread.builtinToolsEnabled !== false
+                        ? 'bg-[var(--accent-soft)] border-[var(--accent)]/35 text-[var(--accent)]'
+                        : 'bg-[var(--bg-surface)] border-[var(--border-subtle)] text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+                    }`}
+                    title={
+                      activeThread.builtinToolsEnabled !== false
+                        ? t('chat.builtinToolsOnTitle')
+                        : t('chat.builtinToolsOffTitle')
+                    }
+                  >
+                    <Wrench className="w-3.5 h-3.5" />
+                    <span>{t('chat.builtinToolsLabel')}</span>
+                  </button>
+                )}
 
                 <input
                   ref={fileInputRef}

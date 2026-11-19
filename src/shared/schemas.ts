@@ -212,6 +212,7 @@ export interface ThreadDto {
   branchFromMessageId: string | null
   workspacePath: string | null
   enabledMcpIds: string[] | null
+  builtinToolsEnabled: boolean
   skillIds: string[] | null
   isPinned: boolean
   archivedAt: number | null
@@ -226,7 +227,8 @@ export const ThreadCreateSchema = z.object({
   model: z.string().optional().nullable(),
   reasoningEffort: z.enum(['low', 'medium', 'high']).optional().nullable(),
   workspacePath: z.string().optional().nullable(),
-  enabledMcpIds: z.array(z.string()).optional().nullable()
+  enabledMcpIds: z.array(z.string()).optional().nullable(),
+  builtinToolsEnabled: z.boolean().optional()
 })
 
 export const ThreadUpdateSchema = z.object({
@@ -236,6 +238,7 @@ export const ThreadUpdateSchema = z.object({
   fastMode: z.boolean().optional(),
   workspacePath: z.string().nullable().optional(),
   enabledMcpIds: z.array(z.string()).nullable().optional(),
+  builtinToolsEnabled: z.boolean().optional(),
   skillIds: z.array(z.string()).nullable().optional(),
   isPinned: z.boolean().optional(),
   archived: z.boolean().optional()
@@ -277,11 +280,29 @@ export interface SkillDto {
   name: string
   description: string
   path: string
-  source: 'local' | 'claude'
+  source: 'builtin' | 'local' | 'claude'
   enabled: boolean
 }
 
 // ==================== Settings Schema ====================
+
+export const WebSearchBackendSchema = z.enum([
+  'auto',
+  'tavily',
+  'brave',
+  'searxng',
+  'duckduckgo'
+])
+export type WebSearchBackend = z.infer<typeof WebSearchBackendSchema>
+
+export const WebSearchSettingsSchema = z.object({
+  backend: WebSearchBackendSchema.default('auto'),
+  searxngUrl: z.string().default(''),
+  hasTavilyApiKey: z.boolean().default(false),
+  tavilyApiKeyPreview: z.string().nullable().default(null),
+  hasBraveApiKey: z.boolean().default(false),
+  braveApiKeyPreview: z.string().nullable().default(null)
+})
 
 export const SettingsSchema = z.object({
   general: z.object({
@@ -289,7 +310,8 @@ export const SettingsSchema = z.object({
     language: z.enum(['zh-CN']).default('zh-CN'),
     autoLaunch: z.boolean().default(false),
     globalShortcutEnabled: z.boolean().default(true),
-    globalShortcut: z.string().default('Alt+Space')
+    globalShortcut: z.string().default('Alt+Space'),
+    onboardingCompleted: z.boolean().default(false)
   }).default({}),
   chat: z.object({
     defaultModel: z.string().default(''),
@@ -301,6 +323,22 @@ export const SettingsSchema = z.object({
   }).default({}),
   acp: z.object({
     permissionTimeoutSec: z.number().int().min(1).max(300).default(60)
+  }).default({}),
+  tools: z.object({
+    autoApproveReadOnly: z.boolean().default(true),
+    maxSteps: z.number().int().min(1).max(100).default(20),
+    shellTimeoutSec: z.number().int().min(5).max(600).default(120),
+    memoryAutoInject: z.boolean().default(true),
+    webSearch: WebSearchSettingsSchema.default({})
+  }).default({}),
+  channels: z.object({
+    feishu: z.object({
+      enabled: z.boolean().default(false),
+      appId: z.string().default(''),
+      domain: z.enum(['feishu', 'lark']).default('feishu'),
+      hasAppSecret: z.boolean().default(false),
+      appSecretPreview: z.string().nullable().default(null)
+    }).default({})
   }).default({}),
   update: z.object({
     feedUrl: z.string().default(''),
@@ -314,6 +352,26 @@ export const SettingsPatchSchema = z.object({
   chat: SettingsSchema.shape.chat.removeDefault().partial().optional(),
   toolModel: SettingsSchema.shape.toolModel.removeDefault().partial().optional(),
   acp: SettingsSchema.shape.acp.removeDefault().partial().optional(),
+  tools: z.object({
+    autoApproveReadOnly: z.boolean().optional(),
+    maxSteps: z.number().int().min(1).max(100).optional(),
+    shellTimeoutSec: z.number().int().min(5).max(600).optional(),
+    memoryAutoInject: z.boolean().optional(),
+    webSearch: z.object({
+      backend: WebSearchBackendSchema.optional(),
+      searxngUrl: z.string().optional(),
+      tavilyApiKey: z.string().nullable().optional(),
+      braveApiKey: z.string().nullable().optional()
+    }).optional()
+  }).optional(),
+  channels: z.object({
+    feishu: z.object({
+      enabled: z.boolean().optional(),
+      appId: z.string().optional(),
+      domain: z.enum(['feishu', 'lark']).optional(),
+      appSecret: z.string().nullable().optional()
+    }).optional()
+  }).optional(),
   update: SettingsSchema.shape.update.removeDefault().partial().optional()
 })
 export type AppSettingsPatch = z.infer<typeof SettingsPatchSchema>
@@ -407,6 +465,7 @@ export const CronJobUpsertSchema = z.object({
   threadId: z.string().optional().nullable(),
   prompt: z.string().min(1),
   model: z.string().optional().nullable(),
+  feishuChatId: z.string().optional().nullable(),
   enabled: z.boolean().default(true)
 })
 export type CronJobUpsertInput = z.infer<typeof CronJobUpsertSchema>
@@ -419,6 +478,7 @@ export interface CronJobDto {
   threadId: string | null
   prompt: string
   model: string | null
+  feishuChatId: string | null
   enabled: boolean
   lastRunAt: number | null
   nextRunAt: number | null
@@ -524,6 +584,65 @@ export interface ExecutionTraceDto {
   error: string | null
   startedAt: number
   finishedAt: number
+}
+
+// ==================== Memory Schemas (R4) ====================
+
+export const MemoryUpsertSchema = z.object({
+  title: z.string().min(1),
+  content: z.string().min(1),
+  tags: z.array(z.string()).default([]),
+  sourceThreadId: z.string().optional().nullable()
+})
+export type MemoryUpsertInput = z.infer<typeof MemoryUpsertSchema>
+
+export interface MemoryDto {
+  id: string
+  title: string
+  tags: string[]
+  content: string
+  sourceThreadId: string | null
+  fileName: string
+  filePath: string
+  createdAt: number
+  updatedAt: number
+}
+
+export interface MemorySearchHitDto extends MemoryDto {
+  snippet: string
+}
+
+// ==================== Channel & Feishu Bridge Schemas (R3) ====================
+
+export interface ChannelMappingDto {
+  id: string
+  platform: string
+  externalChatId: string
+  externalUserId: string
+  chatType: 'p2p' | 'group' | string
+  threadId: string
+  metadata: Record<string, unknown>
+  createdAt: number
+  updatedAt: number
+}
+
+export interface FeishuBridgeEventDto {
+  id: string
+  timestamp: number
+  type: string
+  summary: string
+}
+
+export interface FeishuBridgeStatusDto {
+  enabled: boolean
+  configured: boolean
+  appId: string
+  domain: 'feishu' | 'lark'
+  status: 'disconnected' | 'connecting' | 'connected' | 'error'
+  lastError: string | null
+  lastConnectedAt: number | null
+  botOpenId: string | null
+  recentEvents: FeishuBridgeEventDto[]
 }
 
 export interface WsServerEnvelope<T = unknown> {

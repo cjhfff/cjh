@@ -1445,7 +1445,8 @@ describe('Round 2 Gap Closure — B4–B7', () => {
       expect(prompt.shortcut).toBe('cr')
 
       const pList = await (await app.request('/api/prompts', { headers })).json()
-      expect(pList).toHaveLength(1)
+      expect(pList.some((p: any) => p.id === prompt.id)).toBe(true)
+      expect(pList.length).toBeGreaterThanOrEqual(6)
 
       const pUpd = await app.request(`/api/prompts/${prompt.id}`, {
         method: 'PUT',
@@ -1491,7 +1492,9 @@ describe('Round 2 Gap Closure — B4–B7', () => {
 
       const pDel = await app.request(`/api/prompts/${prompt.id}`, { method: 'DELETE', headers })
       expect(pDel.status).toBe(200)
-      expect((await (await app.request('/api/prompts', { headers })).json())).toHaveLength(0)
+      const remainingPrompts = await (await app.request('/api/prompts', { headers })).json()
+      expect(remainingPrompts.some((p: any) => p.id === prompt.id)).toBe(false)
+      expect(remainingPrompts).toHaveLength(5)
     } finally {
       await daemon.shutdown()
     }

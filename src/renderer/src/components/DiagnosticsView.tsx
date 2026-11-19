@@ -15,11 +15,13 @@ import {
 } from 'lucide-react'
 import type { AppSettings } from '@shared/schemas'
 import { apiFetch, getDaemonConnection } from '../lib/api'
+import { useWorkspaceStore } from '../store/workspace-store'
 import { CustomSelect, Switch } from './ui/primitives'
 
 export function DiagnosticsView() {
   const { t } = useTranslation()
   const qc = useQueryClient()
+  const setOnboardingOpen = useWorkspaceStore(s => s.setOnboardingOpen)
   const importFileRef = useRef<HTMLInputElement>(null)
 
   const [connInfo, setConnInfo] = useState<{
@@ -327,6 +329,22 @@ export function DiagnosticsView() {
             {importBanner.text}
           </div>
         )}
+
+        {/* Onboarding Reopen Card (R2) */}
+        <div className="p-5 rounded-2xl surface-card flex flex-wrap items-center justify-between gap-4">
+          <div className="space-y-0.5">
+            <div className="font-semibold text-[13px]">{t('system.reopenOnboardingTitle')}</div>
+            <p className="text-[var(--text-muted)]">{t('system.reopenOnboardingDesc')}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setOnboardingOpen(true)}
+            className="px-4 py-2 rounded-xl bg-[var(--accent)] text-[var(--accent-fg)] font-medium inline-flex items-center gap-1.5 hover:opacity-90 transition shadow-sm"
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            <span>{t('system.reopenOnboardingBtn')}</span>
+          </button>
+        </div>
 
         {/* Desktop Integration & Global Shortcut Card (A10) */}
         {settings && (

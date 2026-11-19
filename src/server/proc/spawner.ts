@@ -2,6 +2,7 @@ import { ChildProcess, spawn, spawnSync } from 'node:child_process'
 import { delimiter, dirname, extname, isAbsolute, join, resolve } from 'node:path'
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
+import { fileURLToPath } from 'node:url'
 
 const CACHE_TTL_MS = 30_000
 
@@ -29,17 +30,37 @@ export function clearCommandResolutionCache(): void {
   pathCache.clear()
 }
 
+function resolveBundledBinDirs(): string[] {
+  const candidates: string[] = []
+  const resourcesPath = (process as { resourcesPath?: string }).resourcesPath
+  if (resourcesPath) {
+    candidates.push(join(resourcesPath, 'bin'))
+  }
+  candidates.push(resolve(process.cwd(), 'resources', 'bin'))
+  try {
+    const here = dirname(fileURLToPath(import.meta.url))
+    candidates.push(resolve(here, '../../resources/bin'))
+    candidates.push(resolve(here, '../../../resources/bin'))
+  } catch {
+    // Ignore fileURLToPath edge cases
+  }
+  return candidates
+}
+
 export function buildAugmentedPath(basePath = process.env.PATH || ''): string {
   const home = homedir()
+  const bundledBins = resolveBundledBinDirs()
   const extraDirs =
     process.platform === 'win32'
       ? [
+          ...bundledBins,
           join(home, '.local', 'bin'),
           join(home, 'AppData', 'Roaming', 'npm'),
           join(home, '.bun', 'bin'),
           'C:\\Program Files\\nodejs'
         ]
       : [
+          ...bundledBins,
           join(home, '.local', 'bin'),
           '/opt/homebrew/bin',
           '/usr/local/bin'

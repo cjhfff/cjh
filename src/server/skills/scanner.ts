@@ -26,15 +26,18 @@ export class SkillsScanner {
 
   constructor(
     private db: AppDatabase,
-    private localSkillsDir: string
+    private localSkillsDir: string,
+    private builtinSkillsDir?: string
   ) {}
 
   scan(): SkillDto[] {
     const enabledMap = this.db.getSkillsEnabledMap()
-    const roots: Array<{ dir: string; source: 'local' | 'claude' }> = [
-      { dir: this.localSkillsDir, source: 'local' },
-      { dir: join(homedir(), '.claude', 'skills'), source: 'claude' }
-    ]
+    const roots: Array<{ dir: string; source: 'builtin' | 'local' | 'claude' }> = []
+    if (this.builtinSkillsDir) {
+      roots.push({ dir: this.builtinSkillsDir, source: 'builtin' })
+    }
+    roots.push({ dir: this.localSkillsDir, source: 'local' })
+    roots.push({ dir: join(homedir(), '.claude', 'skills'), source: 'claude' })
 
     const found: SkillDto[] = []
     for (const root of roots) {
@@ -77,6 +80,16 @@ export class SkillsScanner {
     return this.cached
   }
 
+  getContent(id: string): { skill: SkillDto; content: string } | null {
+    const target = this.list().find(s => s.id === id)
+    if (!target || !existsSync(target.path)) return null
+    try {
+      return { skill: target, content: readFileSync(target.path, 'utf8') }
+    } catch {
+      return null
+    }
+  }
+
   setEnabled(id: string, enabled: boolean): SkillDto | null {
     const target = this.list().find(s => s.id === id)
     if (!target) return null
@@ -89,7 +102,7 @@ export class SkillsScanner {
     const all = this.list().filter(s => s.enabled)
     const filtered = selectedIds ? all.filter(s => selectedIds.includes(s.id)) : all
     if (!filtered.length) return ''
-    const lines = filtered.map(s => `- ${s.name} (${s.path}): ${s.description}`)
-    return `\n\n<available_skills>\n以下本地技能已启用，需要时可参考对应 SKILL.md：\n${lines.join('\n')}\n</available_skills>`
+    const lines = filtered.map(s => `- [${s.id}] ${s.name}: ${s.description}`)
+    return `\n\n<available_skills>\n以下技能已启用（渐进加载：仅展示名称与简介，需要执行相关流程时请调用 skill_read 工具读取完整 SKILL.md）：\n${lines.join('\n')}\n</available_skills>`
   }
 }

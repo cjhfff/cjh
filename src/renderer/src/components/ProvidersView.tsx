@@ -473,7 +473,7 @@ export function ProvidersView() {
         style={{ backgroundImage: 'var(--ambient-glow)' }}
       >
         {!form || !selectedProvider ? (
-          <div className="h-full max-w-md mx-auto flex flex-col items-center justify-center text-center space-y-3">
+          <div className="h-full max-w-md mx-auto flex flex-col items-center justify-center text-center space-y-4">
             <div className="w-11 h-11 rounded-2xl bg-[var(--accent-soft)] text-[var(--accent)] flex items-center justify-center">
               <Globe className="w-5 h-5" />
             </div>
@@ -481,6 +481,48 @@ export function ProvidersView() {
             <p className="text-xs text-[var(--text-muted)] leading-relaxed">
               {t('provider.noSelectedDesc')}
             </p>
+            <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() =>
+                  createPresetMut.mutate({
+                    ...SUB2API_TEMPLATE,
+                    name: t('provider.presetSub2apiName'),
+                    models: [
+                      SUB2API_TEMPLATE.models[0],
+                      { ...SUB2API_TEMPLATE.models[1], name: t('provider.presetToolModelName') }
+                    ],
+                    id: providers.some(p => p.id === 'sub2api')
+                      ? `sub2api-${Date.now().toString().slice(-3)}`
+                      : 'sub2api'
+                  })
+                }
+                className="px-4 py-2 rounded-xl bg-[var(--accent)] text-[var(--accent-fg)] text-xs font-medium inline-flex items-center gap-1.5 hover:opacity-90 transition shadow-sm"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>{t('provider.emptyAddSub2api')}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  createPresetMut.mutate({
+                    ...CLAUDE_ACP_TEMPLATE,
+                    name: t('provider.presetClaudeAcpName'),
+                    models: [
+                      { ...CLAUDE_ACP_TEMPLATE.models[0], description: t('provider.presetClaudeOpusDesc') },
+                      { ...CLAUDE_ACP_TEMPLATE.models[1], description: t('provider.presetClaudeSonnetDesc') }
+                    ],
+                    id: providers.some(p => p.id === 'claude-acp')
+                      ? `claude-acp-${Date.now().toString().slice(-3)}`
+                      : 'claude-acp'
+                  })
+                }
+                className="px-4 py-2 rounded-xl bg-[var(--bg-surface)] hover:bg-[var(--bg-elevated)] border border-[var(--border-subtle)] text-xs font-medium inline-flex items-center gap-1.5 transition"
+              >
+                <Zap className="w-3.5 h-3.5 text-[var(--warning)]" />
+                <span>{t('provider.emptyAddClaudeAcp')}</span>
+              </button>
+            </div>
           </div>
         ) : (
           <div className="max-w-3xl mx-auto space-y-6 text-xs animate-enter">

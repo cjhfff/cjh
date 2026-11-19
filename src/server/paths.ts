@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { homedir } from 'node:os'
+import { fileURLToPath } from 'node:url'
 
 export interface AppPaths {
   dataDir: string
@@ -9,9 +10,32 @@ export interface AppPaths {
   logsDir: string
   attachmentsDir: string
   skillsDir: string
+  builtinSkillsDir: string
+  memoryDir: string
   updatesStagingDir: string
   runtimeJsonPath: string
   masterKeyPath: string
+}
+
+function resolveBuiltinSkillsDir(): string {
+  const resourcesPath = (process as { resourcesPath?: string }).resourcesPath
+  if (resourcesPath) {
+    const packaged = join(resourcesPath, 'skills')
+    if (existsSync(packaged)) return packaged
+  }
+  const cwdCandidate = resolve(process.cwd(), 'resources', 'skills')
+  if (existsSync(cwdCandidate)) return cwdCandidate
+
+  try {
+    const here = dirname(fileURLToPath(import.meta.url))
+    const relCandidate = resolve(here, '../../resources/skills')
+    if (existsSync(relCandidate)) return relCandidate
+    const relCandidate3 = resolve(here, '../../../resources/skills')
+    if (existsSync(relCandidate3)) return relCandidate3
+  } catch {
+    // Ignore fileURLToPath edge cases
+  }
+  return cwdCandidate
 }
 
 export function resolveAppPaths(): AppPaths {
@@ -46,9 +70,10 @@ export function resolveAppPaths(): AppPaths {
   const logsDir = join(dataDir, 'logs')
   const attachmentsDir = join(dataDir, 'attachments')
   const skillsDir = join(dataDir, 'skills')
+  const memoryDir = join(dataDir, 'memory')
   const updatesStagingDir = join(dataDir, 'updates-staging')
 
-  for (const dir of [dataDir, logsDir, attachmentsDir, skillsDir, updatesStagingDir]) {
+  for (const dir of [dataDir, logsDir, attachmentsDir, skillsDir, memoryDir, updatesStagingDir]) {
     mkdirSync(dir, { recursive: true })
   }
 
@@ -59,6 +84,8 @@ export function resolveAppPaths(): AppPaths {
     logsDir,
     attachmentsDir,
     skillsDir,
+    builtinSkillsDir: resolveBuiltinSkillsDir(),
+    memoryDir,
     updatesStagingDir,
     runtimeJsonPath: join(dataDir, 'runtime.json'),
     masterKeyPath: join(dataDir, 'master.key')

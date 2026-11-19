@@ -4,6 +4,7 @@ import {
   AcpModeOption,
   AppSettings,
   AppSettingsPatch,
+  ChannelMappingDto,
   CompositeModelOption,
   CronJobDto,
   CronJobUpsertInput,
@@ -35,6 +36,10 @@ const MIGRATION_004_ID = '004_messages_fts'
 const MIGRATION_005_ID = '005_prompts'
 const MIGRATION_006_ID = '006_thread_branching'
 const MIGRATION_007_ID = '007_traces'
+const MIGRATION_008_ID = '008_r1_tools_and_secrets'
+const MIGRATION_009_ID = '009_r2_preset_prompts'
+const MIGRATION_010_ID = '010_r4_memories'
+const MIGRATION_011_ID = '011_r3_feishu_bridge'
 
 export type ProviderDbUpsertInput = Omit<
   ProviderUpsertInput,
@@ -205,12 +210,43 @@ export class AppDatabase {
 
     this.applyMigrations()
 
-    const settingsRow = this.sqlite.prepare('SELECT data FROM settings WHERE id = 1').get()
+    const provCountRow = this.sqlite
+      .prepare('SELECT COUNT(*) as cnt FROM providers')
+      .get() as { cnt: number } | undefined
+    const hasExistingProviders = Number(provCountRow?.cnt || 0) > 0
+
+    const settingsRow = this.sqlite.prepare('SELECT data FROM settings WHERE id = 1').get() as
+      | { data: string }
+      | undefined
     if (!settingsRow) {
-      const defaults = SettingsSchema.parse({})
+      const defaults = SettingsSchema.parse({
+        general: { onboardingCompleted: hasExistingProviders }
+      })
       this.sqlite
         .prepare('INSERT INTO settings (id, data, updated_at) VALUES (1, ?, ?)')
         .run(JSON.stringify(defaults), Date.now())
+    } else if (hasExistingProviders) {
+      try {
+        const rawObj = JSON.parse(settingsRow.data) || {}
+        if (
+          !rawObj.general ||
+          typeof rawObj.general !== 'object' ||
+          rawObj.general.onboardingCompleted === undefined
+        ) {
+          const upgraded = SettingsSchema.parse({
+            ...rawObj,
+            general: {
+              ...(rawObj.general && typeof rawObj.general === 'object' ? rawObj.general : {}),
+              onboardingCompleted: true
+            }
+          })
+          this.sqlite
+            .prepare('UPDATE settings SET data = ?, updated_at = ? WHERE id = 1')
+            .run(JSON.stringify(upgraded), Date.now())
+        }
+      } catch {
+        // Ignore malformed settings JSON
+      }
     }
   }
 
@@ -386,39 +422,282 @@ export class AppDatabase {
         .prepare('INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)')
         .run(MIGRATION_007_ID, Date.now())
     }
+
+    const applied008 = this.sqlite
+      .prepare('SELECT id FROM schema_migrations WHERE id = ?')
+      .get(MIGRATION_008_ID)
+    if (!applied008) {
+      this.sqlite.exec(`
+        CREATE TABLE IF NOT EXISTS app_secrets (
+          key TEXT PRIMARY KEY,
+          value_enc TEXT,
+          updated_at INTEGER NOT NULL
+        );
+      `)
+      const cols = this.sqlite.prepare('PRAGMA table_info(threads)').all() as Array<{
+        name: string
+      }>
+      const colNames = new Set(cols.map(c => c.name))
+      if (!colNames.has('builtin_tools_enabled')) {
+        this.sqlite.exec(
+          'ALTER TABLE threads ADD COLUMN builtin_tools_enabled INTEGER NOT NULL DEFAULT 1;'
+        )
+      }
+      this.sqlite
+        .prepare('INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)')
+        .run(MIGRATION_008_ID, Date.now())
+    }
+
+    const applied009 = this.sqlite
+      .prepare('SELECT id FROM schema_migrations WHERE id = ?')
+      .get(MIGRATION_009_ID)
+    if (!applied009) {
+      const now = Date.now()
+      const presets = [
+        {
+          id: 'preset-summarize',
+          title: '总结要点',
+          shortcut: 'summarize',
+          category: '效率',
+          content:
+            '请对以下内容进行结构化总结：\n1. 一句话核心结论\n2. 关键要点（3~5 条）\n3. 后续待办或风险提示\n\n原文如下：\n'
+        },
+        {
+          id: 'preset-translate',
+          title: '中英精准翻译',
+          shortcut: 'translate',
+          category: '写作',
+          content:
+            '请将以下内容翻译为自然流畅的目标语言（中文翻英文 / 英文翻中文），准确保留专有名词与技术术语：\n\n'
+        },
+        {
+          id: 'preset-polish',
+          title: '专业文本润色',
+          shortcut: 'polish',
+          category: '写作',
+          content:
+            '请润色以下文本，在不改变原意的前提下提升逻辑清晰度、简洁度与专业表达，并简要说明主要修改点：\n\n'
+        },
+        {
+          id: 'preset-explain-code',
+          title: '解释代码逻辑',
+          shortcut: 'explain',
+          category: '研发',
+          content:
+            '请逐段解释以下代码的核心职责、输入输出、关键状态流转，以及可能存在的边界条件或潜在隐患：\n\n'
+        },
+        {
+          id: 'preset-commit-msg',
+          title: '生成提交信息',
+          shortcut: 'commit',
+          category: '研发',
+          content:
+            '请根据当前改动或以下 diff 生成符合 Conventional Commits 规范的 git commit message（包含简洁标题与要点说明）：\n\n'
+        }
+      ]
+      const stmt = this.sqlite.prepare(
+        'INSERT OR IGNORE INTO prompts (id, title, shortcut, content, category, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+      )
+      for (const p of presets) {
+        stmt.run(p.id, p.title, p.shortcut, p.content, p.category, now, now)
+      }
+      this.sqlite
+        .prepare('INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)')
+        .run(MIGRATION_009_ID, Date.now())
+    }
+
+    const applied010 = this.sqlite
+      .prepare('SELECT id FROM schema_migrations WHERE id = ?')
+      .get(MIGRATION_010_ID)
+    if (!applied010) {
+      this.sqlite.exec(`
+        CREATE TABLE IF NOT EXISTS memories (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          tags TEXT NOT NULL DEFAULT '[]',
+          source_thread_id TEXT,
+          file_name TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_memories_updated_at ON memories(updated_at DESC);
+        CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+          memory_id UNINDEXED,
+          title,
+          tags,
+          content,
+          tokenize='trigram'
+        );
+      `)
+      this.sqlite
+        .prepare('INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)')
+        .run(MIGRATION_010_ID, Date.now())
+    }
+
+    const applied011 = this.sqlite
+      .prepare('SELECT id FROM schema_migrations WHERE id = ?')
+      .get(MIGRATION_011_ID)
+    if (!applied011) {
+      this.sqlite.exec(`
+        CREATE TABLE IF NOT EXISTS channel_mappings (
+          id TEXT PRIMARY KEY,
+          platform TEXT NOT NULL,
+          external_chat_id TEXT NOT NULL,
+          external_user_id TEXT NOT NULL,
+          chat_type TEXT NOT NULL DEFAULT 'p2p',
+          thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+          metadata TEXT NOT NULL DEFAULT '{}',
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          UNIQUE(platform, external_chat_id, external_user_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_channel_mappings_thread ON channel_mappings(thread_id);
+      `)
+      const cronCols = this.sqlite.prepare('PRAGMA table_info(cron_jobs)').all() as Array<{
+        name: string
+      }>
+      if (!cronCols.some(c => c.name === 'feishu_chat_id')) {
+        this.sqlite.exec('ALTER TABLE cron_jobs ADD COLUMN feishu_chat_id TEXT;')
+      }
+      this.sqlite
+        .prepare('INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)')
+        .run(MIGRATION_011_ID, Date.now())
+    }
   }
 
   close(): void {
     this.sqlite.close()
   }
 
-  // ==================== Settings ====================
+  // ==================== App Secrets & Settings ====================
+
+  getSecret(key: string): string | null {
+    try {
+      const row = this.sqlite
+        .prepare('SELECT value_enc FROM app_secrets WHERE key = ?')
+        .get(key) as { value_enc: string | null } | undefined
+      if (!row || !row.value_enc) return null
+      return this.vault.decrypt(row.value_enc)
+    } catch {
+      return null
+    }
+  }
+
+  setSecret(key: string, plainValue: string | null): void {
+    if (!plainValue || !plainValue.trim()) {
+      this.sqlite.prepare('DELETE FROM app_secrets WHERE key = ?').run(key)
+      return
+    }
+    const enc = this.vault.encrypt(plainValue.trim())
+    this.sqlite
+      .prepare(
+        'INSERT INTO app_secrets (key, value_enc, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value_enc = excluded.value_enc, updated_at = excluded.updated_at'
+      )
+      .run(key, enc, Date.now())
+  }
 
   getSettings(): AppSettings {
     const row = this.sqlite.prepare('SELECT data FROM settings WHERE id = 1').get() as
       | { data: string }
       | undefined
-    if (!row) return SettingsSchema.parse({})
-    try {
-      return SettingsSchema.parse(JSON.parse(row.data))
-    } catch {
-      return SettingsSchema.parse({})
+    const tavilyPlain = this.getSecret('web_search.tavily_api_key')
+    const bravePlain = this.getSecret('web_search.brave_api_key')
+    const feishuSecretPlain = this.getSecret('channels.feishu.app_secret')
+
+    let rawObj: Record<string, unknown> = {}
+    if (row) {
+      try {
+        rawObj = JSON.parse(row.data) || {}
+      } catch {
+        rawObj = {}
+      }
     }
+
+    const base = SettingsSchema.parse(rawObj)
+    return SettingsSchema.parse({
+      ...base,
+      tools: {
+        ...base.tools,
+        webSearch: {
+          ...base.tools.webSearch,
+          hasTavilyApiKey: Boolean(tavilyPlain),
+          tavilyApiKeyPreview: SecretVault.mask(tavilyPlain),
+          hasBraveApiKey: Boolean(bravePlain),
+          braveApiKeyPreview: SecretVault.mask(bravePlain)
+        }
+      },
+      channels: {
+        ...base.channels,
+        feishu: {
+          ...base.channels.feishu,
+          hasAppSecret: Boolean(feishuSecretPlain),
+          appSecretPreview: SecretVault.mask(feishuSecretPlain)
+        }
+      }
+    })
   }
 
   updateSettings(patch: AppSettingsPatch): AppSettings {
+    if (patch.tools?.webSearch?.tavilyApiKey !== undefined) {
+      this.setSecret('web_search.tavily_api_key', patch.tools.webSearch.tavilyApiKey)
+    }
+    if (patch.tools?.webSearch?.braveApiKey !== undefined) {
+      this.setSecret('web_search.brave_api_key', patch.tools.webSearch.braveApiKey)
+    }
+    if (patch.channels?.feishu?.appSecret !== undefined) {
+      this.setSecret('channels.feishu.app_secret', patch.channels.feishu.appSecret)
+    }
+
     const current = this.getSettings()
+    const nextWebSearch = {
+      ...current.tools.webSearch,
+      ...(patch.tools?.webSearch?.backend !== undefined
+        ? { backend: patch.tools.webSearch.backend }
+        : {}),
+      ...(patch.tools?.webSearch?.searxngUrl !== undefined
+        ? { searxngUrl: patch.tools.webSearch.searxngUrl }
+        : {})
+    }
+    const nextFeishu = {
+      ...current.channels.feishu,
+      ...(patch.channels?.feishu?.enabled !== undefined
+        ? { enabled: patch.channels.feishu.enabled }
+        : {}),
+      ...(patch.channels?.feishu?.appId !== undefined
+        ? { appId: patch.channels.feishu.appId }
+        : {}),
+      ...(patch.channels?.feishu?.domain !== undefined
+        ? { domain: patch.channels.feishu.domain }
+        : {})
+    }
     const merged = SettingsSchema.parse({
       general: { ...current.general, ...(patch.general || {}) },
       chat: { ...current.chat, ...(patch.chat || {}) },
       toolModel: { ...current.toolModel, ...(patch.toolModel || {}) },
       acp: { ...current.acp, ...(patch.acp || {}) },
+      tools: {
+        ...current.tools,
+        ...(patch.tools?.autoApproveReadOnly !== undefined
+          ? { autoApproveReadOnly: patch.tools.autoApproveReadOnly }
+          : {}),
+        ...(patch.tools?.maxSteps !== undefined ? { maxSteps: patch.tools.maxSteps } : {}),
+        ...(patch.tools?.shellTimeoutSec !== undefined
+          ? { shellTimeoutSec: patch.tools.shellTimeoutSec }
+          : {}),
+        ...(patch.tools?.memoryAutoInject !== undefined
+          ? { memoryAutoInject: patch.tools.memoryAutoInject }
+          : {}),
+        webSearch: nextWebSearch
+      },
+      channels: {
+        feishu: nextFeishu
+      },
       update: { ...current.update, ...(patch.update || {}) }
     })
     this.sqlite
       .prepare('UPDATE settings SET data = ?, updated_at = ? WHERE id = 1')
       .run(JSON.stringify(merged), Date.now())
-    return merged
+    return this.getSettings()
   }
 
   // ==================== Providers ====================
@@ -702,6 +981,8 @@ export class AppDatabase {
       branchFromMessageId: (row.branch_from_message_id as string | null) ?? null,
       workspacePath: (row.workspace_path as string | null) ?? null,
       enabledMcpIds: row.enabled_mcp_ids ? JSON.parse(String(row.enabled_mcp_ids)) : null,
+      builtinToolsEnabled:
+        row.builtin_tools_enabled === undefined ? true : Boolean(row.builtin_tools_enabled),
       skillIds: row.skill_ids ? JSON.parse(String(row.skill_ids)) : null,
       isPinned: Boolean(row.is_pinned),
       archivedAt: row.archived_at ? Number(row.archived_at) : null,
@@ -739,6 +1020,7 @@ export class AppDatabase {
     reasoningEffort?: 'low' | 'medium' | 'high' | null
     workspacePath?: string | null
     enabledMcpIds?: string[] | null
+    builtinToolsEnabled?: boolean
   }): ThreadDto {
     const id = nanoid(12)
     const now = Date.now()
@@ -748,9 +1030,9 @@ export class AppDatabase {
       .prepare(
         `INSERT INTO threads (
           id, title, title_source, model, reasoning_effort, fast_mode,
-          active_leaf_id, workspace_path, enabled_mcp_ids, skill_ids,
+          active_leaf_id, workspace_path, enabled_mcp_ids, builtin_tools_enabled, skill_ids,
           is_pinned, archived_at, metadata, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, 0, NULL, ?, ?, NULL, 0, NULL, '{}', ?, ?)`
+        ) VALUES (?, ?, ?, ?, ?, 0, NULL, ?, ?, ?, NULL, 0, NULL, '{}', ?, ?)`
       )
       .run(
         id,
@@ -760,6 +1042,7 @@ export class AppDatabase {
         input.reasoningEffort ?? null,
         input.workspacePath ?? null,
         input.enabledMcpIds ? JSON.stringify(input.enabledMcpIds) : null,
+        input.builtinToolsEnabled === false ? 0 : 1,
         now,
         now
       )
@@ -777,6 +1060,7 @@ export class AppDatabase {
       activeLeafId?: string | null
       workspacePath?: string | null
       enabledMcpIds?: string[] | null
+      builtinToolsEnabled?: boolean
       skillIds?: string[] | null
       isPinned?: boolean
       archived?: boolean
@@ -798,7 +1082,7 @@ export class AppDatabase {
       .prepare(
         `UPDATE threads SET
           title = ?, title_source = ?, model = ?, reasoning_effort = ?, fast_mode = ?,
-          active_leaf_id = ?, workspace_path = ?, enabled_mcp_ids = ?, skill_ids = ?,
+          active_leaf_id = ?, workspace_path = ?, enabled_mcp_ids = ?, builtin_tools_enabled = ?, skill_ids = ?,
           is_pinned = ?, archived_at = ?, metadata = ?, updated_at = ?
         WHERE id = ?`
       )
@@ -815,6 +1099,11 @@ export class AppDatabase {
               patch.enabledMcpIds !== undefined ? patch.enabledMcpIds : cur.enabledMcpIds
             )
           : null,
+        (patch.builtinToolsEnabled !== undefined
+          ? patch.builtinToolsEnabled
+          : cur.builtinToolsEnabled)
+          ? 1
+          : 0,
         (patch.skillIds !== undefined ? patch.skillIds : cur.skillIds)
           ? JSON.stringify(patch.skillIds !== undefined ? patch.skillIds : cur.skillIds)
           : null,
@@ -848,6 +1137,24 @@ export class AppDatabase {
     return this.getThread(id, statusLookup)
   }
 
+  addThreadAllowedBuiltinTool(
+    id: string,
+    toolName: string,
+    statusLookup?: (threadId: string) => ThreadRuntimeStatus
+  ): ThreadDto | null {
+    const cur = this.getThread(id, statusLookup)
+    if (!cur) return null
+    const prev = Array.isArray(cur.metadata?.allowedBuiltinTools)
+      ? cur.metadata.allowedBuiltinTools.filter((x): x is string => typeof x === 'string')
+      : []
+    if (prev.includes(toolName)) return cur
+    return this.updateThreadMetadata(
+      id,
+      { allowedBuiltinTools: [...prev, toolName] },
+      statusLookup
+    )
+  }
+
   deleteThread(id: string): boolean {
     this.sqlite.prepare('DELETE FROM messages_fts WHERE thread_id = ?').run(id)
     const res = this.sqlite.prepare('DELETE FROM threads WHERE id = ?').run(id)
@@ -878,9 +1185,9 @@ export class AppDatabase {
         `INSERT INTO threads (
           id, title, title_source, model, reasoning_effort, fast_mode,
           active_leaf_id, parent_thread_id, branch_from_message_id,
-          workspace_path, enabled_mcp_ids, skill_ids,
+          workspace_path, enabled_mcp_ids, builtin_tools_enabled, skill_ids,
           is_pinned, archived_at, metadata, created_at, updated_at
-        ) VALUES (?, ?, 'manual', ?, ?, ?, NULL, ?, ?, ?, ?, ?, 0, NULL, '{}', ?, ?)`
+        ) VALUES (?, ?, 'manual', ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, 0, NULL, '{}', ?, ?)`
       )
       .run(
         newId,
@@ -892,6 +1199,7 @@ export class AppDatabase {
         resolvedBranchMsgId,
         source.workspacePath,
         source.enabledMcpIds ? JSON.stringify(source.enabledMcpIds) : null,
+        source.builtinToolsEnabled ? 1 : 0,
         source.skillIds ? JSON.stringify(source.skillIds) : null,
         now,
         now
@@ -1378,6 +1686,7 @@ export class AppDatabase {
       threadId: (row.thread_id as string | null) ?? null,
       prompt: String(row.prompt),
       model: (row.model as string | null) ?? null,
+      feishuChatId: (row.feishu_chat_id as string | null) ?? null,
       enabled: Boolean(row.enabled),
       lastRunAt: row.last_run_at ? Number(row.last_run_at) : null,
       nextRunAt: row.next_run_at ? Number(row.next_run_at) : null,
@@ -1436,9 +1745,9 @@ export class AppDatabase {
       this.sqlite
         .prepare(
           `INSERT INTO cron_jobs (
-            id, name, cron_expr, timezone, thread_id, prompt, model,
+            id, name, cron_expr, timezone, thread_id, prompt, model, feishu_chat_id,
             enabled, last_run_at, next_run_at, last_status, last_error, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, NULL, ?, ?)`
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, NULL, ?, ?)`
         )
         .run(
           id,
@@ -1448,6 +1757,7 @@ export class AppDatabase {
           input.threadId ?? null,
           input.prompt,
           input.model ?? null,
+          input.feishuChatId ?? null,
           input.enabled ? 1 : 0,
           input.nextRunAt ?? null,
           now,
@@ -1457,7 +1767,7 @@ export class AppDatabase {
       this.sqlite
         .prepare(
           `UPDATE cron_jobs SET
-            name = ?, cron_expr = ?, timezone = ?, thread_id = ?, prompt = ?, model = ?,
+            name = ?, cron_expr = ?, timezone = ?, thread_id = ?, prompt = ?, model = ?, feishu_chat_id = ?,
             enabled = ?, next_run_at = ?, updated_at = ?
            WHERE id = ?`
         )
@@ -1468,6 +1778,7 @@ export class AppDatabase {
           input.threadId ?? null,
           input.prompt,
           input.model ?? null,
+          input.feishuChatId ?? null,
           input.enabled ? 1 : 0,
           input.nextRunAt !== undefined ? input.nextRunAt : existing.nextRunAt,
           now,
@@ -1805,13 +2116,337 @@ export class AppDatabase {
     return rows.map(r => this.mapTraceRow(r))
   }
 
+  // ==================== Memories Index & FTS5 (R4) ====================
+
+  upsertMemoryIndex(params: {
+    id: string
+    title: string
+    tags: string[]
+    content: string
+    sourceThreadId: string | null
+    fileName: string
+    createdAt: number
+    updatedAt: number
+  }): void {
+    const tagsJson = JSON.stringify(params.tags)
+    const tagsText = params.tags.join(' ')
+    this.sqlite
+      .prepare(
+        `INSERT INTO memories (id, title, tags, source_thread_id, file_name, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           title = excluded.title,
+           tags = excluded.tags,
+           source_thread_id = excluded.source_thread_id,
+           file_name = excluded.file_name,
+           updated_at = excluded.updated_at`
+      )
+      .run(
+        params.id,
+        params.title,
+        tagsJson,
+        params.sourceThreadId,
+        params.fileName,
+        params.createdAt,
+        params.updatedAt
+      )
+    this.sqlite.prepare('DELETE FROM memories_fts WHERE memory_id = ?').run(params.id)
+    this.sqlite
+      .prepare('INSERT INTO memories_fts (memory_id, title, tags, content) VALUES (?, ?, ?, ?)')
+      .run(params.id, params.title, tagsText, params.content)
+  }
+
+  deleteMemoryIndex(id: string): boolean {
+    this.sqlite.prepare('DELETE FROM memories_fts WHERE memory_id = ?').run(id)
+    const res = this.sqlite.prepare('DELETE FROM memories WHERE id = ?').run(id)
+    return Number(res.changes) > 0
+  }
+
+  listMemoryRows(limit = 200): Array<{
+    id: string
+    title: string
+    tags: string[]
+    sourceThreadId: string | null
+    fileName: string
+    createdAt: number
+    updatedAt: number
+  }> {
+    const rows = this.sqlite
+      .prepare('SELECT * FROM memories ORDER BY updated_at DESC, created_at DESC LIMIT ?')
+      .all(limit) as Array<Record<string, unknown>>
+    return rows.map(r => ({
+      id: String(r.id),
+      title: String(r.title),
+      tags: JSON.parse(String(r.tags || '[]')),
+      sourceThreadId: (r.source_thread_id as string | null) ?? null,
+      fileName: String(r.file_name),
+      createdAt: Number(r.created_at),
+      updatedAt: Number(r.updated_at)
+    }))
+  }
+
+  getMemoryRow(id: string): {
+    id: string
+    title: string
+    tags: string[]
+    sourceThreadId: string | null
+    fileName: string
+    createdAt: number
+    updatedAt: number
+  } | null {
+    const r = this.sqlite.prepare('SELECT * FROM memories WHERE id = ?').get(id) as
+      | Record<string, unknown>
+      | undefined
+    if (!r) return null
+    return {
+      id: String(r.id),
+      title: String(r.title),
+      tags: JSON.parse(String(r.tags || '[]')),
+      sourceThreadId: (r.source_thread_id as string | null) ?? null,
+      fileName: String(r.file_name),
+      createdAt: Number(r.created_at),
+      updatedAt: Number(r.updated_at)
+    }
+  }
+
+  searchMemoryFts(
+    rawQuery: string,
+    limit = 5
+  ): Array<{
+    id: string
+    title: string
+    tags: string[]
+    sourceThreadId: string | null
+    fileName: string
+    snippet: string
+    createdAt: number
+    updatedAt: number
+  }> {
+    const query = rawQuery.trim()
+    if (!query) return []
+
+    const mapHit = (r: Record<string, unknown>) => ({
+      id: String(r.id),
+      title: String(r.title),
+      tags: JSON.parse(String(r.tags || '[]')) as string[],
+      sourceThreadId: (r.source_thread_id as string | null) ?? null,
+      fileName: String(r.file_name),
+      snippet: String(r.snippet || ''),
+      createdAt: Number(r.created_at),
+      updatedAt: Number(r.updated_at)
+    })
+
+    // Extract candidate >=3-char tokens (ASCII words or CJK segments) for natural language recall
+    const rawTokens = query
+      .split(/[\s,.;:!?，。；：！？、"'()[\]{}<>]+/)
+      .map(s => s.trim())
+      .filter(Boolean)
+
+    const ftsPhrases: string[] = []
+    if (Array.from(query).length >= 3 && rawTokens.length <= 2) {
+      ftsPhrases.push(`"${query.replace(/"/g, '""')}"`)
+    }
+    for (const tok of rawTokens) {
+      if (Array.from(tok).length >= 3) {
+        const quoted = `"${tok.replace(/"/g, '""')}"`
+        if (!ftsPhrases.includes(quoted)) ftsPhrases.push(quoted)
+      }
+      // Also split mixed CJK+ASCII tokens into sub-runs >= 3 chars
+      const subMatches = tok.match(/[a-zA-Z0-9_.-]{3,}|[\u4e00-\u9fff]{3,}/g)
+      if (subMatches) {
+        for (const sub of subMatches) {
+          const quoted = `"${sub.replace(/"/g, '""')}"`
+          if (!ftsPhrases.includes(quoted)) ftsPhrases.push(quoted)
+        }
+      }
+    }
+
+    if (ftsPhrases.length > 0) {
+      const ftsExpr = ftsPhrases.slice(0, 8).join(' OR ')
+      try {
+        const rows = this.sqlite
+          .prepare(
+            `SELECT m.*, snippet(memories_fts, 3, '', '', '…', 20) AS snippet
+             FROM memories_fts f
+             JOIN memories m ON m.id = f.memory_id
+             WHERE memories_fts MATCH ?
+             ORDER BY bm25(memories_fts), m.updated_at DESC
+             LIMIT ?`
+          )
+          .all(ftsExpr, limit) as Array<Record<string, unknown>>
+        if (rows.length > 0) {
+          return rows.map(mapHit)
+        }
+      } catch {
+        // Fallback to LIKE below
+      }
+    }
+
+    // Fallback LIKE for short (<3 char) tokens or CJK 2-char keywords
+    const escapeLike = (s: string) => `%${s.replace(/[\\%_]/g, '\\$&')}%`
+    const likeTerms = new Set<string>()
+    if (Array.from(query).length <= 12) likeTerms.add(query)
+    for (const tok of rawTokens) {
+      if (Array.from(tok).length >= 2) likeTerms.add(tok)
+      const cjkRuns = tok.match(/[\u4e00-\u9fff]{2,}/g)
+      if (cjkRuns) {
+        for (const run of cjkRuns) {
+          const chars = Array.from(run)
+          if (chars.length <= 4) likeTerms.add(run)
+          for (let i = 0; i <= chars.length - 2 && likeTerms.size < 10; i++) {
+            likeTerms.add(chars.slice(i, i + 2).join(''))
+          }
+        }
+      }
+    }
+
+    const terms = [...likeTerms].slice(0, 8)
+    if (!terms.length) return []
+
+    const clauses = terms
+      .map(() => "(f.title LIKE ? ESCAPE '\\' OR f.tags LIKE ? ESCAPE '\\' OR f.content LIKE ? ESCAPE '\\')")
+      .join(' OR ')
+    const params: Array<string | number> = []
+    for (const term of terms) {
+      const pat = escapeLike(term)
+      params.push(pat, pat, pat)
+    }
+    params.push(limit)
+
+    const likeRows = this.sqlite
+      .prepare(
+        `SELECT m.*, substr(f.content, 1, 160) AS snippet
+         FROM memories_fts f
+         JOIN memories m ON m.id = f.memory_id
+         WHERE ${clauses}
+         ORDER BY m.updated_at DESC
+         LIMIT ?`
+      )
+      .all(...params) as Array<Record<string, unknown>>
+
+    return likeRows.map(mapHit)
+  }
+
+  // ==================== Channel Mappings (R3) ====================
+
+  private mapChannelMappingRow(row: Record<string, unknown>): ChannelMappingDto {
+    return {
+      id: String(row.id),
+      platform: String(row.platform),
+      externalChatId: String(row.external_chat_id),
+      externalUserId: String(row.external_user_id),
+      chatType: String(row.chat_type || 'p2p'),
+      threadId: String(row.thread_id),
+      metadata: JSON.parse(String(row.metadata || '{}')),
+      createdAt: Number(row.created_at),
+      updatedAt: Number(row.updated_at)
+    }
+  }
+
+  getChannelMapping(
+    platform: string,
+    externalChatId: string,
+    externalUserId: string
+  ): ChannelMappingDto | null {
+    const row = this.sqlite
+      .prepare(
+        'SELECT * FROM channel_mappings WHERE platform = ? AND external_chat_id = ? AND external_user_id = ?'
+      )
+      .get(platform, externalChatId, externalUserId) as Record<string, unknown> | undefined
+    return row ? this.mapChannelMappingRow(row) : null
+  }
+
+  upsertChannelMapping(params: {
+    platform: string
+    externalChatId: string
+    externalUserId: string
+    chatType?: string
+    threadId: string
+    metadata?: Record<string, unknown>
+  }): ChannelMappingDto {
+    const existing = this.getChannelMapping(
+      params.platform,
+      params.externalChatId,
+      params.externalUserId
+    )
+    const now = Date.now()
+    if (!existing) {
+      const id = `cmap_${nanoid(10)}`
+      this.sqlite
+        .prepare(
+          `INSERT INTO channel_mappings (
+            id, platform, external_chat_id, external_user_id, chat_type, thread_id, metadata, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          id,
+          params.platform,
+          params.externalChatId,
+          params.externalUserId,
+          params.chatType || 'p2p',
+          params.threadId,
+          JSON.stringify(params.metadata || {}),
+          now,
+          now
+        )
+    } else {
+      this.sqlite
+        .prepare(
+          `UPDATE channel_mappings SET
+            chat_type = ?, thread_id = ?, metadata = ?, updated_at = ?
+           WHERE id = ?`
+        )
+        .run(
+          params.chatType || existing.chatType,
+          params.threadId,
+          JSON.stringify(params.metadata ?? existing.metadata),
+          now,
+          existing.id
+        )
+    }
+    return this.getChannelMapping(params.platform, params.externalChatId, params.externalUserId)!
+  }
+
+  listChannelMappings(platform?: string): ChannelMappingDto[] {
+    const rows = platform
+      ? (this.sqlite
+          .prepare('SELECT * FROM channel_mappings WHERE platform = ? ORDER BY updated_at DESC')
+          .all(platform) as Array<Record<string, unknown>>)
+      : (this.sqlite
+          .prepare('SELECT * FROM channel_mappings ORDER BY updated_at DESC')
+          .all() as Array<Record<string, unknown>>)
+    return rows.map(r => this.mapChannelMappingRow(r))
+  }
+
+  deleteChannelMapping(id: string): boolean {
+    const res = this.sqlite.prepare('DELETE FROM channel_mappings WHERE id = ?').run(id)
+    return Number(res.changes) > 0
+  }
+
+  listKnownFeishuChats(): Array<{ chatId: string; chatType: string; updatedAt: number }> {
+    const rows = this.sqlite
+      .prepare(
+        `SELECT external_chat_id AS chat_id, MAX(chat_type) AS chat_type, MAX(updated_at) AS updated_at
+         FROM channel_mappings
+         WHERE platform = 'feishu'
+         GROUP BY external_chat_id
+         ORDER BY updated_at DESC`
+      )
+      .all() as Array<Record<string, unknown>>
+    return rows.map(r => ({
+      chatId: String(r.chat_id),
+      chatType: String(r.chat_type || 'p2p'),
+      updatedAt: Number(r.updated_at || 0)
+    }))
+  }
+
   // ==================== Portable Export & Import ====================
 
   exportAllData() {
     return {
       exportedAt: new Date().toISOString(),
       app: 'cjh',
-      schemaVersion: MIGRATION_007_ID,
+      schemaVersion: MIGRATION_011_ID,
       settings: this.getSettings(),
       providers: this.listProviders(), // API keys masked safely
       threads: this.listThreads(undefined, true),
@@ -1947,14 +2582,14 @@ export class AppDatabase {
             mode === 'replace'
               ? `INSERT OR REPLACE INTO threads (
                   id, title, title_source, model, reasoning_effort, fast_mode,
-                  active_leaf_id, workspace_path, enabled_mcp_ids, skill_ids,
+                  active_leaf_id, workspace_path, enabled_mcp_ids, builtin_tools_enabled, skill_ids,
                   is_pinned, archived_at, metadata, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
               : `INSERT OR IGNORE INTO threads (
                   id, title, title_source, model, reasoning_effort, fast_mode,
-                  active_leaf_id, workspace_path, enabled_mcp_ids, skill_ids,
+                  active_leaf_id, workspace_path, enabled_mcp_ids, builtin_tools_enabled, skill_ids,
                   is_pinned, archived_at, metadata, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
           const res = this.sqlite
             .prepare(sql)
             .run(
@@ -1967,6 +2602,7 @@ export class AppDatabase {
               typeof t.activeLeafId === 'string' ? t.activeLeafId : null,
               typeof t.workspacePath === 'string' ? t.workspacePath : null,
               t.enabledMcpIds ? JSON.stringify(t.enabledMcpIds) : null,
+              t.builtinToolsEnabled === false ? 0 : 1,
               t.skillIds ? JSON.stringify(t.skillIds) : null,
               t.isPinned ? 1 : 0,
               typeof t.archivedAt === 'number' ? t.archivedAt : null,
@@ -2056,10 +2692,10 @@ export class AppDatabase {
           }
           const sql =
             mode === 'replace'
-              ? `INSERT OR REPLACE INTO cron_jobs (id, name, cron_expr, timezone, thread_id, prompt, model, enabled, last_run_at, next_run_at, last_status, last_error, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-              : `INSERT OR IGNORE INTO cron_jobs (id, name, cron_expr, timezone, thread_id, prompt, model, enabled, last_run_at, next_run_at, last_status, last_error, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+              ? `INSERT OR REPLACE INTO cron_jobs (id, name, cron_expr, timezone, thread_id, prompt, model, feishu_chat_id, enabled, last_run_at, next_run_at, last_status, last_error, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+              : `INSERT OR IGNORE INTO cron_jobs (id, name, cron_expr, timezone, thread_id, prompt, model, feishu_chat_id, enabled, last_run_at, next_run_at, last_status, last_error, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
           const res = this.sqlite
             .prepare(sql)
             .run(
@@ -2070,6 +2706,7 @@ export class AppDatabase {
               typeof j.threadId === 'string' ? j.threadId : null,
               String(j.prompt || ''),
               typeof j.model === 'string' ? j.model : null,
+              typeof j.feishuChatId === 'string' ? j.feishuChatId : null,
               j.enabled === false ? 0 : 1,
               typeof j.lastRunAt === 'number' ? j.lastRunAt : null,
               typeof j.nextRunAt === 'number' ? j.nextRunAt : null,

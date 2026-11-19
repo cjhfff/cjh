@@ -3,7 +3,7 @@ import { rmSync, writeFileSync } from 'node:fs'
 import { AddressInfo } from 'node:net'
 import { serve } from '@hono/node-server'
 import { WebSocketServer } from 'ws'
-import { WsClientMessageSchema } from '@shared/schemas'
+import { WsClientMessage, WsClientMessageSchema } from '@shared/schemas'
 import { resolveAppPaths } from './paths'
 import { TaggedLogger } from './logger'
 import { SecretVault } from './crypto/vault'
@@ -11,10 +11,13 @@ import { AppDatabase } from './db/database'
 import { WsHub } from './ws-hub'
 import { AcpAgentManager } from './acp/manager'
 import { McpHub } from './mcp/hub'
+import { MemoryStore } from './memory/store'
+import { PermissionGate } from './permissions/gate'
 import { SkillsScanner } from './skills/scanner'
 import { GenerationEngine } from './engine/generation-engine'
 import { PortableUpdater } from './updater/portable-updater'
 import { CronScheduler } from './cron/scheduler'
+import { FeishuBridge, FeishuSdkFactory } from './channels/feishu'
 import { createHttpApp, ServerContext } from './app'
 
 export interface RunningDaemon {
@@ -28,6 +31,7 @@ export async function startLocalDaemon(opts?: {
   port?: number
   authToken?: string
   masterKeyHex?: string
+  feishuSdkFactory?: FeishuSdkFactory
   onRequestUpdateInstall?: (opts?: { dryRun?: boolean }) => Promise<boolean> | boolean
 }): Promise<RunningDaemon> {
   const envToken = process.env.CJH_LOCAL_TOKEN
@@ -47,10 +51,26 @@ export async function startLocalDaemon(opts?: {
   const mcpHub = new McpHub(db, logger, () => {
     wsHub.broadcast('mcp_status_changed', mcpHub.getRuntimeList())
   })
-  const skillsScanner = new SkillsScanner(db, paths.skillsDir)
+  const skillsScanner = new SkillsScanner(db, paths.skillsDir, paths.builtinSkillsDir)
   skillsScanner.scan()
 
+  const memoryStore = new MemoryStore(db, paths.memoryDir)
+  memoryStore.syncFromDisk()
+
   let engineRef: GenerationEngine | null = null
+
+  const onPermissionRequested = (permDto: Parameters<ConstructorParameters<typeof PermissionGate>[2]>[0]) => {
+    wsHub.broadcast('permission_requested', permDto)
+    engineRef?.notifyPermissionStateChanged(permDto.threadId)
+  }
+  const onPermissionResolved = (
+    resolvedPayload: Parameters<ConstructorParameters<typeof PermissionGate>[3]>[0]
+  ) => {
+    wsHub.broadcast('permission_resolved', resolvedPayload)
+    engineRef?.notifyPermissionStateChanged(resolvedPayload.threadId)
+  }
+
+  const permissionGate = new PermissionGate(db, logger, onPermissionRequested, onPermissionResolved)
 
   const acpManager = new AcpAgentManager(
     db,
@@ -59,15 +79,10 @@ export async function startLocalDaemon(opts?: {
       apiUrl: `http://127.0.0.1:${boundPort}`,
       apiToken: authToken
     }),
-    permDto => {
-      wsHub.broadcast('permission_requested', permDto)
-      engineRef?.notifyPermissionStateChanged(permDto.threadId)
-    },
-    resolvedPayload => {
-      wsHub.broadcast('permission_resolved', resolvedPayload)
-      engineRef?.notifyPermissionStateChanged(resolvedPayload.threadId)
-    },
+    onPermissionRequested,
+    onPermissionResolved,
     {
+      permissionGate,
       onThreadMetadataChanged: updatedThread => {
         wsHub.broadcast('thread_updated', updatedThread)
       },
@@ -90,12 +105,36 @@ export async function startLocalDaemon(opts?: {
     acpManager,
     mcpHub,
     skillsScanner,
-    paths.attachmentsDir
+    paths.attachmentsDir,
+    permissionGate,
+    memoryStore,
+    () => ({
+      apiUrl: `http://127.0.0.1:${boundPort}`,
+      apiToken: authToken
+    })
   )
   engineRef = engine
 
+  const dispatchWsClientMessage = (rawMsg: WsClientMessage) => {
+    const parsed = WsClientMessageSchema.parse(rawMsg)
+    if (parsed.type === 'generate_response' || parsed.type === 'steer_generation') {
+      engine.steerOrGenerate(parsed.data)
+    } else if (parsed.type === 'stop_generation') {
+      engine.stopGeneration(parsed.data.threadId)
+    } else if (parsed.type === 'permission_response') {
+      permissionGate.resolvePermission(parsed.data.requestId, parsed.data.optionId)
+    }
+  }
+
   const updater = new PortableUpdater('0.1.0', paths.updatesStagingDir)
-  const cronScheduler = new CronScheduler(db, engine, wsHub, logger)
+  const feishuBridge = new FeishuBridge(
+    db,
+    wsHub,
+    logger,
+    dispatchWsClientMessage,
+    opts?.feishuSdkFactory
+  )
+  const cronScheduler = new CronScheduler(db, engine, wsHub, logger, 15_000, feishuBridge)
 
   const ctx: ServerContext = {
     paths,
@@ -104,12 +143,15 @@ export async function startLocalDaemon(opts?: {
     logger,
     db,
     wsHub,
+    permissionGate,
     acpManager,
     mcpHub,
     skillsScanner,
+    memoryStore,
     engine,
     updater,
     cronScheduler,
+    feishuBridge,
     requestUpdateInstall: opts?.onRequestUpdateInstall
   }
 
@@ -149,14 +191,7 @@ export async function startLocalDaemon(opts?: {
         ws.on('message', raw => {
           try {
             const json = JSON.parse(raw.toString('utf8'))
-            const parsed = WsClientMessageSchema.parse(json)
-            if (parsed.type === 'generate_response' || parsed.type === 'steer_generation') {
-              engine.steerOrGenerate(parsed.data)
-            } else if (parsed.type === 'stop_generation') {
-              engine.stopGeneration(parsed.data.threadId)
-            } else if (parsed.type === 'permission_response') {
-              acpManager.resolvePermission(parsed.data.requestId, parsed.data.optionId)
-            }
+            dispatchWsClientMessage(json)
           } catch (err) {
             ws.send(
               JSON.stringify({
@@ -197,10 +232,12 @@ export async function startLocalDaemon(opts?: {
 
   void mcpHub.syncAllEnabled()
   cronScheduler.start()
+  void feishuBridge.startIfEnabled()
 
   const shutdown = async () => {
     logger.info('Server', 'Shutting down daemon...')
     cronScheduler.stop()
+    await feishuBridge.disconnect().catch(() => undefined)
     try {
       rmSync(paths.runtimeJsonPath, { force: true })
     } catch {

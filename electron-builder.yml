@@ -11,6 +11,8 @@ files:
 extraResources:
   - from: resources/bin
     to: bin
+  - from: resources/skills
+    to: skills
 win:
   signAndEditExecutable: false
   target:

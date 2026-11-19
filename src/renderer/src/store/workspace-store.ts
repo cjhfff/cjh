@@ -8,7 +8,7 @@ import type {
   ThreadRuntimeStatus
 } from '@shared/schemas'
 
-export type MainViewTab = 'chat' | 'providers' | 'mcp' | 'cron' | 'system'
+export type MainViewTab = 'chat' | 'providers' | 'mcp' | 'memory' | 'cron' | 'channels' | 'system'
 
 interface ThreadModeState {
   currentModeId: string
@@ -19,6 +19,7 @@ interface WorkspaceState {
   activeView: MainViewTab
   activeThreadId: string | null
   highlightedMessageId: string | null
+  onboardingOpen: boolean | null
   messagesByThread: Record<string, StoredMessageDto[]>
   statusByThread: Record<string, ThreadRuntimeStatus>
   permissionsByThread: Record<string, PendingPermissionRequestDto[]>
@@ -29,6 +30,7 @@ interface WorkspaceState {
   setActiveView: (view: MainViewTab) => void
   setActiveThreadId: (id: string | null) => void
   setHighlightedMessageId: (id: string | null) => void
+  setOnboardingOpen: (open: boolean | null) => void
   setThreadMessages: (
     threadId: string,
     messages: StoredMessageDto[],
@@ -68,6 +70,7 @@ export const useWorkspaceStore = create<WorkspaceState>(set => ({
   activeView: 'chat',
   activeThreadId: null,
   highlightedMessageId: null,
+  onboardingOpen: null,
   messagesByThread: {},
   statusByThread: {},
   permissionsByThread: {},
@@ -78,6 +81,7 @@ export const useWorkspaceStore = create<WorkspaceState>(set => ({
   setActiveView: view => set({ activeView: view }),
   setActiveThreadId: id => set({ activeThreadId: id }),
   setHighlightedMessageId: id => set({ highlightedMessageId: id }),
+  setOnboardingOpen: open => set({ onboardingOpen: open }),
 
   setThreadMessages: (threadId, messages, permissions) =>
     set(state => ({

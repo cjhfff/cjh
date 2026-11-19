@@ -1,10 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Activity, Clock, Cpu, MessageSquare, Moon, PanelLeft, Plug, Sparkles, Sun } from 'lucide-react'
+import { Activity, Brain, Clock, Cpu, MessageSquare, Moon, PanelLeft, Plug, Radio, Sparkles, Sun } from 'lucide-react'
 import type {
   AppSettings,
   PendingPermissionRequestDto,
+  ProviderDto,
   StoredMessageDto,
   WsClientMessage
 } from '@shared/schemas'
@@ -13,8 +14,11 @@ import { MainViewTab, useWorkspaceStore } from './store/workspace-store'
 import { ChatWorkspace } from './components/ChatWorkspace'
 import { ProvidersView } from './components/ProvidersView'
 import { ExtensionsView } from './components/ExtensionsView'
+import { ChannelsView } from './components/ChannelsView'
 import { CronView } from './components/CronView'
 import { DiagnosticsView } from './components/DiagnosticsView'
+import { MemoryView } from './components/MemoryView'
+import { OnboardingModal } from './components/OnboardingModal'
 
 export function App() {
   const { t } = useTranslation()
@@ -23,6 +27,8 @@ export function App() {
 
   const activeView = useWorkspaceStore(s => s.activeView)
   const setActiveView = useWorkspaceStore(s => s.setActiveView)
+  const onboardingOpen = useWorkspaceStore(s => s.onboardingOpen)
+  const setOnboardingOpen = useWorkspaceStore(s => s.setOnboardingOpen)
   const setThreadMessages = useWorkspaceStore(s => s.setThreadMessages)
   const upsertMessage = useWorkspaceStore(s => s.upsertMessage)
   const appendDelta = useWorkspaceStore(s => s.appendDelta)
@@ -42,6 +48,28 @@ export function App() {
     queryKey: ['settings'],
     queryFn: () => apiFetch('/api/settings')
   })
+
+  const { data: providers } = useQuery<ProviderDto[]>({
+    queryKey: ['providers'],
+    queryFn: () => apiFetch('/api/providers')
+  })
+
+  const checkedAutoOnboardingRef = useRef(false)
+  useEffect(() => {
+    if (checkedAutoOnboardingRef.current) return
+    if (!settings || !providers) return
+    checkedAutoOnboardingRef.current = true
+    if (settings.general.onboardingCompleted === false) {
+      if (providers.length === 0) {
+        setOnboardingOpen(true)
+      } else {
+        void apiFetch('/api/settings', {
+          method: 'PUT',
+          body: JSON.stringify({ general: { onboardingCompleted: true } })
+        }).then(() => qc.invalidateQueries({ queryKey: ['settings'] }))
+      }
+    }
+  }, [settings, providers, setOnboardingOpen, qc])
 
   useEffect(() => {
     void getDaemonConnection().then(info => {
@@ -174,6 +202,14 @@ export function App() {
         case 'prompts_updated':
           void qc.invalidateQueries({ queryKey: ['prompts'] })
           break
+        case 'memories_updated':
+          void qc.invalidateQueries({ queryKey: ['memories'] })
+          break
+        case 'channel_status_updated':
+          void qc.invalidateQueries({ queryKey: ['feishu-status'] })
+          void qc.invalidateQueries({ queryKey: ['feishu-mappings'] })
+          void qc.invalidateQueries({ queryKey: ['feishu-chats'] })
+          break
         case 'generation_completed':
           void qc.invalidateQueries({ queryKey: ['usage'] })
           break
@@ -217,7 +253,9 @@ export function App() {
     { id: 'chat', label: t('nav.workspace'), icon: <MessageSquare className="w-3.5 h-3.5" /> },
     { id: 'providers', label: t('nav.providers'), icon: <Cpu className="w-3.5 h-3.5" /> },
     { id: 'mcp', label: t('nav.extensions'), icon: <Plug className="w-3.5 h-3.5" /> },
+    { id: 'memory', label: t('nav.memory'), icon: <Brain className="w-3.5 h-3.5" /> },
     { id: 'cron', label: t('nav.cron'), icon: <Clock className="w-3.5 h-3.5" /> },
+    { id: 'channels', label: t('nav.channels'), icon: <Radio className="w-3.5 h-3.5" /> },
     { id: 'system', label: t('nav.diagnostics'), icon: <Activity className="w-3.5 h-3.5" /> }
   ]
 
@@ -285,8 +323,15 @@ export function App() {
       {activeView === 'chat' && <ChatWorkspace sendWs={sendWs} sidebarOpen={sidebarOpen} />}
       {activeView === 'providers' && <ProvidersView />}
       {activeView === 'mcp' && <ExtensionsView />}
+      {activeView === 'memory' && <MemoryView />}
       {activeView === 'cron' && <CronView />}
+      {activeView === 'channels' && <ChannelsView />}
       {activeView === 'system' && <DiagnosticsView />}
+
+      <OnboardingModal
+        open={Boolean(onboardingOpen)}
+        onClose={() => setOnboardingOpen(false)}
+      />
     </div>
   )
 }

@@ -14,6 +14,7 @@ import {
 } from '@shared/schemas'
 import { AppDatabase, guessModelCapabilities } from '../db/database'
 import { TaggedLogger } from '../logger'
+import { PermissionGate } from '../permissions/gate'
 import {
   clearCommandResolutionCache,
   findExecutableInPath,
@@ -94,6 +95,7 @@ export interface AcpPromptAttachment {
 
 export interface AcpManagerOptions {
   idleTimeoutMs?: number
+  permissionGate?: PermissionGate
   onThreadMetadataChanged?: (thread: ThreadDto) => void
   onModeUpdated?: (payload: {
     threadId: string
@@ -144,13 +146,6 @@ interface ActiveAcpSession {
   }
 }
 
-interface PendingPermissionEntry {
-  dto: PendingPermissionRequestDto
-  resolve: (outcome: { outcome: 'cancelled' } | { outcome: 'selected'; optionId: string }) => void
-  rejectOptionId: string | null
-  timer: NodeJS.Timeout
-}
-
 function mapToolCallStatus(raw: unknown): 'running' | 'completed' | 'failed' | undefined {
   if (raw === undefined || raw === null) return undefined
   const s = String(raw).trim()
@@ -196,7 +191,7 @@ export class AcpAgentManager {
   private sessions = new Map<string, ActiveAcpSession>()
   private sessionsByAcpId = new Map<string, ActiveAcpSession>()
   private sessionInits = new Map<string, Promise<ActiveAcpSession>>()
-  private pendingPermissions = new Map<string, PendingPermissionEntry>()
+  private permissionGate: PermissionGate
   private threadCommands = new Map<string, Array<{ name: string; description?: string }>>()
   private turnTokenCounter = 1
   private readonly idleTimeoutMs: number
@@ -214,6 +209,9 @@ export class AcpAgentManager {
     private opts?: AcpManagerOptions
   ) {
     this.idleTimeoutMs = opts?.idleTimeoutMs ?? DEFAULT_ACP_SESSION_IDLE_MS
+    this.permissionGate =
+      opts?.permissionGate ||
+      new PermissionGate(db, logger, onPermissionRequested, onPermissionResolved)
   }
 
   inspectCli(provider: ProviderDto, bypassCache = false): AcpCliInspectResult {
@@ -416,6 +414,10 @@ export class AcpAgentManager {
       )
       this.clearIdleTimer(session)
       session.disposed = true
+      const boundThreadId = session.currentThreadId || session.threadId
+      if (boundThreadId) {
+        this.permissionGate.cancelThreadPermissions(boundThreadId)
+      }
       if (session.threadId && this.sessions.get(session.threadId) === session) {
         this.sessions.delete(session.threadId)
       }
@@ -732,11 +734,15 @@ export class AcpAgentManager {
     const options: PermissionOptionDto[] = rawOptions.map(o => ({
       optionId: String(o.optionId || o.id || ''),
       name: String(o.name || o.optionId || '选项'),
-      kind: String(o.kind || 'allow_once')
+      kind: typeof o.kind === 'string' ? o.kind.trim() : ''
     }))
 
     const rejectOption = options.find(
-      o => /reject|deny|cancel/i.test(o.kind) || /reject|拒绝/i.test(o.name)
+      o =>
+        !/^allow_/i.test(o.kind) &&
+        (/reject|deny|cancel/i.test(o.kind) ||
+          /reject|deny|cancel|拒绝/i.test(o.name) ||
+          /reject|deny|cancel/i.test(o.optionId))
     )
     const rejectOptionId = rejectOption?.optionId ?? null
 
@@ -752,75 +758,29 @@ export class AcpAgentManager {
       return
     }
 
-    const timeoutSec = this.db.getSettings().acp.permissionTimeoutSec || 60
-    const requestId = `perm_${nanoid(10)}`
     const toolCall = params?.toolCall || {}
-    const dto: PendingPermissionRequestDto = {
-      requestId,
-      threadId: session.currentThreadId,
-      providerId: session.providerId,
-      title: String(toolCall.title || '请求执行敏感操作'),
-      toolName: String(toolCall.kind || toolCall.title || 'tool'),
-      rawInput: toolCall.rawInput ?? toolCall.content ?? {},
-      cwd: session.cwd,
-      options,
-      expiresAt: Date.now() + timeoutSec * 1000
-    }
-
-    const timer = setTimeout(() => {
-      this.logger.warn(
-        `ACP:${session.providerId}`,
-        `Permission ${requestId} timed out after ${timeoutSec}s -> auto-rejecting (fail-closed)`
-      )
-      this.resolvePermission(requestId, rejectOptionId || '__cancel__')
-    }, timeoutSec * 1000)
-
-    this.pendingPermissions.set(requestId, {
-      dto,
-      rejectOptionId,
-      timer,
-      resolve: outcome => {
+    void this.permissionGate
+      .requestPermission({
+        threadId: session.currentThreadId,
+        providerId: session.providerId,
+        title: String(toolCall.title || '请求执行敏感操作'),
+        toolName: String(toolCall.kind || toolCall.title || 'tool'),
+        rawInput: toolCall.rawInput ?? toolCall.content ?? {},
+        cwd: session.cwd,
+        options,
+        logTag: `ACP:${session.providerId}`
+      })
+      .then(outcome => {
         this.sendRpcResponse(session, rpcId, { outcome })
-      }
-    })
-
-    this.onPermissionRequested(dto)
+      })
   }
 
   resolvePermission(requestId: string, selectedOptionId: string): boolean {
-    const entry = this.pendingPermissions.get(requestId)
-    if (!entry) return false
-    clearTimeout(entry.timer)
-    this.pendingPermissions.delete(requestId)
-
-    if (selectedOptionId === '__cancel__' || selectedOptionId === '__reject__') {
-      const outcome = entry.rejectOptionId
-        ? ({ outcome: 'selected', optionId: entry.rejectOptionId } as const)
-        : ({ outcome: 'cancelled' } as const)
-      entry.resolve(outcome)
-      this.onPermissionResolved({
-        requestId,
-        threadId: entry.dto.threadId,
-        outcome: 'rejected'
-      })
-      return true
-    }
-
-    entry.resolve({ outcome: 'selected', optionId: selectedOptionId })
-    this.onPermissionResolved({
-      requestId,
-      threadId: entry.dto.threadId,
-      outcome: selectedOptionId
-    })
-    return true
+    return this.permissionGate.resolvePermission(requestId, selectedOptionId)
   }
 
   getPendingPermissionsForThread(threadId: string): PendingPermissionRequestDto[] {
-    const out: PendingPermissionRequestDto[] = []
-    for (const entry of this.pendingPermissions.values()) {
-      if (entry.dto.threadId === threadId) out.push(entry.dto)
-    }
-    return out
+    return this.permissionGate.getPendingPermissionsForThread(threadId)
   }
 
   getThreadCommands(threadId: string): Array<{ name: string; description?: string }> {
@@ -1338,11 +1298,7 @@ export class AcpAgentManager {
   }
 
   releaseThreadSession(threadId: string, reason = 'released'): boolean {
-    for (const [reqId, entry] of [...this.pendingPermissions.entries()]) {
-      if (entry.dto.threadId === threadId) {
-        this.resolvePermission(reqId, '__cancel__')
-      }
-    }
+    this.permissionGate.cancelThreadPermissions(threadId)
     this.threadCommands.delete(threadId)
 
     const session = this.sessions.get(threadId)
@@ -1754,11 +1710,7 @@ export class AcpAgentManager {
   }
 
   disposeAll(): void {
-    for (const [, entry] of this.pendingPermissions) {
-      clearTimeout(entry.timer)
-      entry.resolve({ outcome: 'cancelled' })
-    }
-    this.pendingPermissions.clear()
+    this.permissionGate.disposeAll()
 
     for (const [, sess] of this.sessions) {
       this.clearIdleTimer(sess)

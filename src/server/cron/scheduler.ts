@@ -1,4 +1,5 @@
 import { CronJobDto, CronRunDto } from '@shared/schemas'
+import { FeishuBridge } from '../channels/feishu'
 import { AppDatabase } from '../db/database'
 import { GenerationEngine } from '../engine/generation-engine'
 import { TaggedLogger } from '../logger'
@@ -238,14 +239,22 @@ export class CronScheduler {
   private timer: NodeJS.Timeout | null = null
   private ticking = false
   private activeJobIds = new Set<string>()
+  private feishuBridge?: FeishuBridge
 
   constructor(
     private db: AppDatabase,
     private engine: GenerationEngine,
     private wsHub: WsHub,
     private logger: TaggedLogger,
-    private intervalMs = 15_000
-  ) {}
+    private intervalMs = 15_000,
+    feishuBridge?: FeishuBridge
+  ) {
+    this.feishuBridge = feishuBridge
+  }
+
+  setFeishuBridge(bridge: FeishuBridge): void {
+    this.feishuBridge = bridge
+  }
 
   start(): void {
     if (this.timer) return
@@ -346,19 +355,45 @@ export class CronScheduler {
       })
 
       const finishedAt = Date.now()
-      const status = result.ok ? 'success' : 'error'
+      let status: 'success' | 'error' = result.ok ? 'success' : 'error'
+      let finalError = result.error ?? null
+
+      if (job.feishuChatId && this.feishuBridge) {
+        try {
+          const msg = result.messageId ? this.db.getMessageById(result.messageId) : null
+          const replyText = msg
+            ? msg.message.parts
+                .filter(p => p.type === 'text')
+                .map(p => (p as { type: 'text'; text: string }).text)
+                .join('\n')
+                .trim()
+            : ''
+          const payload = result.ok
+            ? replyText || '（任务已完成，无文本输出）'
+            : `⚠ 任务执行失败：${result.error || '未知错误'}`
+          await this.feishuBridge.deliverCronResult(job.feishuChatId, job.name, payload)
+        } catch (deliverErr) {
+          const deliverMsg = deliverErr instanceof Error ? deliverErr.message : String(deliverErr)
+          this.logger.error('Bridge:feishu', `Cron "${job.name}" delivery failed: ${deliverMsg}`)
+          if (status === 'success') {
+            status = 'error'
+            finalError = `飞书投递失败: ${deliverMsg}`
+          }
+        }
+      }
+
       run =
         this.db.finishCronRun(run.id, {
           status,
           messageId: result.messageId ?? null,
-          error: result.error ?? null,
+          error: finalError,
           finishedAt
         }) || run
 
       const updatedJob = this.db.updateCronJobRuntime(job.id, {
         lastRunAt: startedAt,
         lastStatus: status,
-        lastError: result.error ?? null
+        lastError: finalError
       })
       if (updatedJob) this.wsHub.broadcast('cron_job_updated', updatedJob)
       this.wsHub.broadcast('cron_run_updated', run)

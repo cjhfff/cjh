@@ -3,12 +3,20 @@ import { WsServerEnvelope } from '@shared/schemas'
 
 export class WsHub {
   private clients = new Set<WebSocket>()
+  private listeners = new Set<(evt: WsServerEnvelope) => void>()
 
   add(ws: WebSocket): void {
     this.clients.add(ws)
     ws.on('close', () => {
       this.clients.delete(ws)
     })
+  }
+
+  subscribe(listener: (evt: WsServerEnvelope) => void): () => void {
+    this.listeners.add(listener)
+    return () => {
+      this.listeners.delete(listener)
+    }
   }
 
   broadcast<T>(type: string, data: T): void {
@@ -21,6 +29,13 @@ export class WsHub {
     for (const client of this.clients) {
       if (client.readyState === 1) {
         client.send(serialized)
+      }
+    }
+    for (const listener of [...this.listeners]) {
+      try {
+        listener(payload)
+      } catch {
+        // Ignore internal listener errors
       }
     }
   }

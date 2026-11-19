@@ -1,7 +1,15 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { generateText, stepCountIs, streamText, type ModelMessage } from 'ai'
+import {
+  generateText,
+  stepCountIs,
+  streamText,
+  type ModelMessage,
+  type TextPart,
+  type ToolCallPart,
+  type ToolResultPart
+} from 'ai'
 import { nanoid } from 'nanoid'
 import {
   GenerateRequestData,
@@ -16,7 +24,10 @@ import { WsHub } from '../ws-hub'
 import { createLanguageModelForProvider } from '../providers/ai-provider'
 import { AcpAgentManager, AcpPromptAttachment, AcpToolCallUpdatePatch } from '../acp/manager'
 import { McpHub } from '../mcp/hub'
+import { MemoryStore } from '../memory/store'
+import { PermissionGate } from '../permissions/gate'
 import { SkillsScanner } from '../skills/scanner'
+import { buildBuiltinToolSet, formatBuiltinToolTitle } from '../tools/builtin'
 
 interface ActiveGenerationState {
   threadId: string
@@ -28,6 +39,7 @@ interface ActiveGenerationState {
 
 export class GenerationEngine {
   private active = new Map<string, ActiveGenerationState>()
+  private permissionGate: PermissionGate
 
   constructor(
     private db: AppDatabase,
@@ -36,13 +48,34 @@ export class GenerationEngine {
     private acpManager: AcpAgentManager,
     private mcpHub: McpHub,
     private skillsScanner: SkillsScanner,
-    private attachmentsDir: string
-  ) {}
+    private attachmentsDir: string,
+    permissionGate?: PermissionGate,
+    private memoryStore?: MemoryStore,
+    private getDaemonEnv?: () => { apiUrl: string; apiToken: string }
+  ) {
+    this.permissionGate =
+      permissionGate ||
+      new PermissionGate(
+        db,
+        logger,
+        dto => {
+          this.wsHub.broadcast('permission_requested', dto)
+          this.notifyPermissionStateChanged(dto.threadId)
+        },
+        payload => {
+          this.wsHub.broadcast('permission_resolved', payload)
+          this.notifyPermissionStateChanged(payload.threadId)
+        }
+      )
+  }
 
   getThreadStatus = (threadId: string): ThreadRuntimeStatus => {
     const st = this.active.get(threadId)
     if (!st) return 'idle'
-    if (this.acpManager.getPendingPermissionsForThread(threadId).length > 0) {
+    if (
+      this.permissionGate.getPendingPermissionsForThread(threadId).length > 0 ||
+      this.acpManager.getPendingPermissionsForThread(threadId).length > 0
+    ) {
       return 'waiting_permission'
     }
     return st.status
@@ -56,6 +89,7 @@ export class GenerationEngine {
   stopGeneration(threadId: string): boolean {
     const running = this.active.get(threadId)
     if (!running) return false
+    this.permissionGate.cancelThreadPermissions(threadId)
     running.abortController.abort()
     return true
   }
@@ -336,6 +370,20 @@ export class GenerationEngine {
         ? this.db.getActiveBranchMessages(thread.id, assistantParentId)
         : []
 
+      const appSettings = this.db.getSettings()
+      const latestUserMsg = [...branchHistory].reverse().find(m => m.role === 'user')
+      const latestUserText = latestUserMsg
+        ? latestUserMsg.message.parts
+            .filter((p): p is Extract<MessagePart, { type: 'text' }> => p.type === 'text')
+            .map(p => p.text)
+            .join('\n')
+            .trim()
+        : ''
+      const memoryAppendix =
+        this.memoryStore && appSettings.tools?.memoryAutoInject !== false && latestUserText
+          ? this.memoryStore.buildSystemPromptAppendix(latestUserText, 5)
+          : ''
+
       if (provider.type === 'acp') {
         const lastMsg = branchHistory[branchHistory.length - 1]
         const latestUser = lastMsg?.role === 'user' ? lastMsg : null
@@ -378,8 +426,11 @@ export class GenerationEngine {
             ? ''
             : '继续'
 
-        const fullPrompt = req.ephemeralContext
-          ? `${req.ephemeralContext}${promptText ? `\n\n${promptText}` : ''}`
+        const combinedEphemeral = [req.ephemeralContext, memoryAppendix.trim()]
+          .filter(Boolean)
+          .join('\n\n')
+        const fullPrompt = combinedEphemeral
+          ? `${combinedEphemeral}${promptText ? `\n\n${promptText}` : ''}`
           : promptText
 
         const cwd = thread.workspacePath || process.cwd()
@@ -438,12 +489,35 @@ export class GenerationEngine {
 
         const enabledMcpIds =
           req.enabledMCPServerIds !== undefined ? req.enabledMCPServerIds : thread.enabledMcpIds
-        const tools = req.noTools ? undefined : this.mcpHub.buildAiSdkToolSet(enabledMcpIds)
-        const hasTools = tools && Object.keys(tools).length > 0
+        const mcpTools = req.noTools ? {} : this.mcpHub.buildAiSdkToolSet(enabledMcpIds)
+        const enableBuiltinTools = !req.noTools && thread.builtinToolsEnabled
+        const builtinTools = enableBuiltinTools
+          ? buildBuiltinToolSet({
+              db: this.db,
+              wsHub: this.wsHub,
+              permissionGate: this.permissionGate,
+              skillsScanner: this.skillsScanner,
+              memoryStore: this.memoryStore,
+              thread,
+              providerId: provider.id,
+              abortSignal: abortController.signal,
+              daemonEnv: this.getDaemonEnv?.()
+            })
+          : {}
+        const tools = { ...mcpTools, ...builtinTools }
+        const hasTools = Object.keys(tools).length > 0
+        const maxSteps = appSettings.tools?.maxSteps || 20
+        const skillsAppendix = enableBuiltinTools
+          ? this.skillsScanner.buildSystemPromptAppendix(thread.skillIds)
+          : ''
 
         let systemPrompt =
           '你是运行在 cjh 本地工作台中的智能助手，回答清晰、准确、务实。' +
-          this.skillsScanner.buildSystemPromptAppendix(thread.skillIds)
+          (thread.workspacePath
+            ? `\n当前线程绑定的工作目录为：${thread.workspacePath}`
+            : '') +
+          skillsAppendix +
+          memoryAppendix
         if (req.ephemeralContext) {
           systemPrompt += `\n\n<ephemeral_context>\n${req.ephemeralContext}\n</ephemeral_context>`
         }
@@ -459,7 +533,7 @@ export class GenerationEngine {
           system: systemPrompt,
           messages: modelMessages,
           tools: hasTools ? tools : undefined,
-          stopWhen: stepCountIs(12),
+          stopWhen: stepCountIs(maxSteps),
           providerOptions: Object.keys(providerOptions).length ? providerOptions : undefined,
           abortSignal: abortController.signal
         })
@@ -470,11 +544,17 @@ export class GenerationEngine {
           } else if (part.type === 'reasoning-delta') {
             appendReasoningDelta(part.text)
           } else if (part.type === 'tool-call') {
-            upsertToolCall(part.toolCallId, part.toolName, part.toolName, part.input)
+            upsertToolCall(
+              part.toolCallId,
+              part.toolName,
+              formatBuiltinToolTitle(part.toolName, part.input),
+              part.input
+            )
           } else if (part.type === 'tool-result') {
             completeToolCall(part.toolCallId, 'completed', part.output, false)
           } else if (part.type === 'tool-error') {
-            completeToolCall(part.toolCallId, 'failed', String(part.error), true)
+            const errText = part.error instanceof Error ? part.error.message : String(part.error)
+            completeToolCall(part.toolCallId, 'failed', errText, true)
           } else if (part.type === 'error') {
             throw part.error instanceof Error ? part.error : new Error(String(part.error))
           }
@@ -736,7 +816,7 @@ export class GenerationEngine {
     ].join('\n')
   }
 
-  private convertHistoryToModelMessages(history: StoredMessageDto[]): ModelMessage[] {
+  convertHistoryToModelMessages(history: StoredMessageDto[]): ModelMessage[] {
     const effectiveHistory = this.sliceFromLastCompaction(history)
     const out: ModelMessage[] = []
     for (const item of effectiveHistory) {
@@ -793,14 +873,85 @@ export class GenerationEngine {
           out.push({ role: 'user', content: contentParts })
         }
       } else if (item.role === 'assistant') {
-        const text = item.message.parts
-          .filter((p): p is Extract<MessagePart, { type: 'text' }> => p.type === 'text')
-          .map(p => p.text)
-          .join('\n')
-          .trim()
-        if (text) {
-          out.push({ role: 'assistant', content: text })
+        let pendingAssistant: Array<TextPart | ToolCallPart> = []
+        let pendingToolResults: ToolResultPart[] = []
+
+        const flushAssistantStep = () => {
+          if (pendingAssistant.length > 0) {
+            if (pendingAssistant.every(p => p.type === 'text')) {
+              const joined = pendingAssistant
+                .map(p => (p as TextPart).text)
+                .join('\n')
+                .trim()
+              if (joined) {
+                out.push({ role: 'assistant', content: joined })
+              }
+            } else {
+              out.push({ role: 'assistant', content: pendingAssistant })
+            }
+            pendingAssistant = []
+          }
+          if (pendingToolResults.length > 0) {
+            out.push({ role: 'tool', content: pendingToolResults })
+            pendingToolResults = []
+          }
         }
+
+        for (const p of item.message.parts) {
+          if (p.type === 'text') {
+            if (p.text.trim()) {
+              if (pendingToolResults.length > 0) {
+                flushAssistantStep()
+              }
+              pendingAssistant.push({ type: 'text', text: p.text })
+            }
+          } else if (p.type === 'tool-call') {
+            const toolCallId = p.toolCallId || `call_${nanoid(8)}`
+            const toolName = p.toolName || 'tool'
+            const normalizedInput =
+              p.input !== undefined && p.input !== null && typeof p.input === 'object'
+                ? p.input
+                : p.input !== undefined
+                  ? { value: p.input }
+                  : {}
+
+            pendingAssistant.push({
+              type: 'tool-call',
+              toolCallId,
+              toolName,
+              input: normalizedInput
+            })
+
+            let toolOutput: ToolResultPart['output']
+            if (p.isError || p.status === 'failed') {
+              const errStr =
+                typeof p.output === 'string'
+                  ? p.output
+                  : JSON.stringify(p.output ?? 'Tool execution failed')
+              toolOutput = { type: 'error-text', value: errStr }
+            } else if (p.status === 'running') {
+              toolOutput = {
+                type: 'error-text',
+                value: 'Tool call was interrupted before completion'
+              }
+            } else if (typeof p.output === 'string') {
+              toolOutput = { type: 'text', value: p.output }
+            } else if (p.output !== undefined) {
+              toolOutput = { type: 'json', value: JSON.parse(JSON.stringify(p.output)) }
+            } else {
+              toolOutput = { type: 'text', value: '' }
+            }
+
+            pendingToolResults.push({
+              type: 'tool-result',
+              toolCallId,
+              toolName,
+              output: toolOutput
+            })
+          }
+        }
+
+        flushAssistantStep()
       }
     }
     return out
