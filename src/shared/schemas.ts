@@ -37,7 +37,7 @@ export const ApiFormatSchema = z.enum([
 ])
 export type ApiFormat = z.infer<typeof ApiFormatSchema>
 
-export const AcpPresetSchema = z.enum(['claude', 'codex', 'gemini', 'custom'])
+export const AcpPresetSchema = z.enum(['claude', 'codex', 'gemini', 'antigravity', 'custom'])
 export type AcpPreset = z.infer<typeof AcpPresetSchema>
 
 export const AcpModeOptionSchema = z.object({
@@ -336,9 +336,16 @@ export const SettingsSchema = z.object({
       enabled: z.boolean().default(false),
       appId: z.string().default(''),
       domain: z.enum(['feishu', 'lark']).default('feishu'),
+      notifyChatId: z.string().default(''),
       hasAppSecret: z.boolean().default(false),
       appSecretPreview: z.string().nullable().default(null)
     }).default({})
+  }).default({}),
+  herdr: z.object({
+    execPath: z.string().default(''),
+    agentCommands: z.record(z.string(), z.array(z.string())).default({}),
+    mutedTerminals: z.array(z.string()).default([]),
+    desktopNotifications: z.boolean().default(true)
   }).default({}),
   update: z.object({
     feedUrl: z.string().default(''),
@@ -369,8 +376,15 @@ export const SettingsPatchSchema = z.object({
       enabled: z.boolean().optional(),
       appId: z.string().optional(),
       domain: z.enum(['feishu', 'lark']).optional(),
+      notifyChatId: z.string().optional(),
       appSecret: z.string().nullable().optional()
     }).optional()
+  }).optional(),
+  herdr: z.object({
+    execPath: z.string().optional(),
+    agentCommands: z.record(z.string(), z.array(z.string())).optional(),
+    mutedTerminals: z.array(z.string()).optional(),
+    desktopNotifications: z.boolean().optional()
   }).optional(),
   update: SettingsSchema.shape.update.removeDefault().partial().optional()
 })
@@ -650,3 +664,5 @@ export interface WsServerEnvelope<T = unknown> {
   data: T
   timestamp: number
 }
+
+export * from './herdr-types'

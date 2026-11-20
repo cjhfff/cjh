@@ -6,6 +6,7 @@ import {
   ThreadDto,
   WsClientMessage
 } from '@shared/schemas'
+import { HerdrClientLike, HerdrNotificationDto, HerdrTerminal } from '@shared/herdr-types'
 import { AppDatabase } from '../db/database'
 import { TaggedLogger } from '../logger'
 import { WsHub } from '../ws-hub'
@@ -174,6 +175,95 @@ function buildPermissionResolvedCard(title: string, outcomeLabel: string): strin
   })
 }
 
+function buildHerdrNotificationCard(dto: HerdrNotificationDto): string {
+  const templateMap: Record<HerdrNotificationDto['kind'], string> = {
+    blocked: 'red',
+    done: 'green',
+    error: 'orange',
+    finished: 'grey'
+  }
+  const prefixMap: Record<HerdrNotificationDto['kind'], string> = {
+    blocked: '终端待处理',
+    done: '终端已完成',
+    error: '终端出错',
+    finished: '终端已退出'
+  }
+  const label =
+    dto.terminalName && dto.terminalName !== dto.address
+      ? `${dto.terminalName} (${dto.address})`
+      : dto.address
+  const headerTitle = `${prefixMap[dto.kind]}：${label}`
+
+  const bodyLines: string[] = [
+    `**Agent**: \`${dto.agent || 'unknown'}\` | **地址**: \`${dto.address}\``,
+    `**目录**: \`${dto.cwd || '-'}\``,
+    `**状态**: ${dto.kind}${dto.blockedKind ? ` (${dto.blockedKind})` : ''} — ${dto.body}`
+  ]
+
+  if (dto.screenTail) {
+    const clippedTail =
+      dto.screenTail.length > 3500 ? `…\n${dto.screenTail.slice(-3500)}` : dto.screenTail
+    bodyLines.push('', '**最近屏幕输出**：', '```text', clippedTail.replace(/```/g, "'''"), '```')
+  }
+
+  const elements: any[] = [
+    {
+      tag: 'markdown',
+      content: bodyLines.join('\n')
+    }
+  ]
+
+  if (dto.kind === 'blocked') {
+    const opts =
+      dto.options && dto.options.length > 0
+        ? dto.options
+        : [
+            { index: 1, label: '1' },
+            { index: 2, label: '2' },
+            { index: 3, label: '3' }
+          ]
+    elements.push({
+      tag: 'action',
+      actions: opts.slice(0, 8).map((opt, idx) => ({
+        tag: 'button',
+        text: {
+          tag: 'plain_text',
+          content:
+            opt.label === String(opt.index)
+              ? `选项 ${opt.index}`
+              : `${opt.index}. ${opt.label}`.slice(0, 40)
+        },
+        type: idx === 0 ? 'primary' : 'default',
+        value: {
+          kind: 'cjh_herdr_answer',
+          terminal: dto.address,
+          choice: opt.index,
+          label: opt.label
+        }
+      }))
+    })
+  }
+
+  elements.push({
+    tag: 'note',
+    elements: [
+      {
+        tag: 'plain_text',
+        content: `提示：直接回复此卡片，或发送 /t ${dto.address} <文本> 可直接发送给该终端`
+      }
+    ]
+  })
+
+  return JSON.stringify({
+    config: { wide_screen_mode: true },
+    header: {
+      template: templateMap[dto.kind],
+      title: { tag: 'plain_text', content: headerTitle }
+    },
+    elements
+  })
+}
+
 interface PendingFeishuTurnCard {
   chatId: string
   thinkingMsgId: string | null
@@ -204,16 +294,47 @@ export class FeishuBridge {
   private seenMessageIds = new Set<string>()
   private threadTurnSessions = new Map<string, ThreadTurnSession>()
   private permissionCards = new Map<string, PermissionCardState>()
+  private herdrNotificationCards = new Map<string, string>()
   private sdkFactory: FeishuSdkFactory
+  private herdrClient: HerdrClientLike | null = null
 
   constructor(
     private db: AppDatabase,
     private wsHub: WsHub,
     private logger: TaggedLogger,
     private dispatchWsClientMessage: (msg: WsClientMessage) => void,
-    sdkFactory?: FeishuSdkFactory
+    sdkFactory?: FeishuSdkFactory,
+    herdrClient?: HerdrClientLike | null
   ) {
     this.sdkFactory = sdkFactory || defaultSdkFactory
+    this.herdrClient = herdrClient ?? null
+  }
+
+  setHerdrClient(client: HerdrClientLike | null): void {
+    this.herdrClient = client
+  }
+
+  private trackHerdrNotificationCard(messageId: string, terminalAddress: string): void {
+    if (this.herdrNotificationCards.has(messageId)) {
+      this.herdrNotificationCards.delete(messageId)
+    }
+    this.herdrNotificationCards.set(messageId, terminalAddress)
+    if (this.herdrNotificationCards.size > 200) {
+      const oldest = this.herdrNotificationCards.keys().next().value
+      if (oldest) this.herdrNotificationCards.delete(oldest)
+    }
+  }
+
+  private resolveRestClient(): FeishuRestClientLike | null {
+    if (this.client) return this.client
+    const cfg = this.db.getSettings().channels.feishu
+    const secret = this.db.getSecret('channels.feishu.app_secret')
+    if (!cfg.appId.trim() || !secret) return null
+    return this.sdkFactory.createClient({
+      appId: cfg.appId.trim(),
+      appSecret: secret,
+      domain: cfg.domain
+    })
   }
 
   private pushEvent(type: string, summary: string): void {
@@ -506,11 +627,18 @@ export class FeishuBridge {
       ? message.mentions
       : []
 
+    const parentId = message.parent_id ? String(message.parent_id) : ''
+    const rootId = message.root_id ? String(message.root_id) : ''
+    const trackedHerdrTerminal =
+      (parentId && this.herdrNotificationCards.get(parentId)) ||
+      (rootId && this.herdrNotificationCards.get(rootId)) ||
+      null
+
     if (chatType === 'group') {
       const botMentioned = this.botOpenId
         ? mentions.some(m => m.id?.open_id === this.botOpenId)
         : mentions.length > 0
-      if (!botMentioned) {
+      if (!botMentioned && !trackedHerdrTerminal) {
         this.logger.debug(this.TAG, `Ignored group message ${messageId} without @bot mention`)
         return { handled: false, reason: 'group_not_mentioned' }
       }
@@ -553,10 +681,21 @@ export class FeishuBridge {
           '- `/new` — 创建新的对话线程并切换过去',
           '- `/stop` — 停止当前线程正在进行的生成',
           '- `/model <id>` — 切换当前线程模型（如 `/model sub2api:gpt-5.5`）',
+          '- `/t ls` — 查看活跃终端列表',
+          '- `/t <终端> <文本>` — 向指定终端发送消息',
+          '- `/t <终端> <序号>` — 终端阻塞时按选项序号作答',
           '- `/help` — 查看本帮助'
         ].join('\n')
       )
       return { handled: true, reason: 'command_help' }
+    }
+
+    if (text === '/t' || /^\/t\s+/.test(text)) {
+      return this.handleHerdrCommand(chatId, text.slice(2).trim())
+    }
+
+    if (!text.startsWith('/') && trackedHerdrTerminal) {
+      return this.handleHerdrCardReply(chatId, trackedHerdrTerminal, text)
     }
 
     if (text === '/new') {
@@ -808,25 +947,254 @@ export class FeishuBridge {
       }
     }
 
+    if (value && typeof value === 'object' && value.kind === 'cjh_herdr_answer') {
+      const terminal = String(value.terminal || '').trim()
+      const choiceRaw = value.choice
+      const choice = typeof choiceRaw === 'number' ? choiceRaw : Number(choiceRaw)
+      const label = String(value.label || choiceRaw || '')
+
+      if (!terminal || !Number.isFinite(choice) || choice < 1) {
+        return { toast: { type: 'error', content: '无效的终端作答参数' } }
+      }
+      if (!this.herdrClient) {
+        return { toast: { type: 'error', content: 'Herdr 服务未连接，无法作答' } }
+      }
+
+      try {
+        await this.herdrClient.answerTerminal(terminal, { choice })
+        this.logger.info(this.TAG, `Card herdr answer callback: ${terminal} -> choice=${choice}`)
+        this.pushEvent('herdr_answer', `${terminal} -> ${choice} (${label})`)
+        return {
+          toast: {
+            type: 'success',
+            content: `已向终端 ${terminal} 发送选项 ${choice}`
+          }
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        this.logger.warn(this.TAG, `Card herdr answer failed for ${terminal}: ${msg}`)
+        return {
+          toast: {
+            type: 'error',
+            content: `作答失败：${msg}`
+          }
+        }
+      }
+    }
+
     return { toast: { type: 'info', content: '已收到交互操作' } }
+  }
+
+  private async resolveHerdrTerminalInfo(target: string): Promise<HerdrTerminal | null> {
+    if (!this.herdrClient) return null
+    const cached = this.herdrClient.getCachedTerminal(target)
+    if (cached) return cached
+    try {
+      return await this.herdrClient.getTerminal(target)
+    } catch {
+      return null
+    }
+  }
+
+  private async handleHerdrCardReply(
+    chatId: string,
+    terminalAddress: string,
+    text: string
+  ): Promise<{ handled: boolean; reason: string }> {
+    if (!this.herdrClient) {
+      await this.sendCardMessage(
+        chatId,
+        buildTextCard('终端控制', 'Herdr 服务未连接，无法将回复发送到终端。', 'orange')
+      )
+      return { handled: true, reason: 'herdr_card_reply_unavailable' }
+    }
+
+    const terminalInfo = await this.resolveHerdrTerminalInfo(terminalAddress)
+    const resolvedAddress = terminalInfo?.address || terminalAddress
+
+    try {
+      if (terminalInfo?.status?.state === 'blocked') {
+        if (/^[1-9]\d*$/.test(text)) {
+          await this.herdrClient.answerTerminal(resolvedAddress, { choice: Number(text) })
+          this.pushEvent('herdr_reply', `${resolvedAddress} <- choice=${text}`)
+          await this.sendCardMessage(
+            chatId,
+            buildTextCard('终端已作答', `已向阻塞终端 \`${resolvedAddress}\` 发送选项 \`${text}\`。`, 'green')
+          )
+        } else {
+          await this.herdrClient.answerTerminal(resolvedAddress, { text })
+          this.pushEvent('herdr_reply', `${resolvedAddress} <- answer_text`)
+          await this.sendCardMessage(
+            chatId,
+            buildTextCard('终端已作答', `已向阻塞终端 \`${resolvedAddress}\` 发送回复文本。`, 'green')
+          )
+        }
+      } else {
+        const res = await this.herdrClient.sendTerminal(resolvedAddress, { text, force: false })
+        this.pushEvent('herdr_reply', `${resolvedAddress} <- turn=${res.turn}`)
+        await this.sendCardMessage(
+          chatId,
+          buildTextCard('终端已接收', `已将回复发送到终端 \`${resolvedAddress}\`（turn=${res.turn}）。`, 'green')
+        )
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      await this.sendCardMessage(
+        chatId,
+        buildTextCard('终端发送失败', `向终端 \`${resolvedAddress}\` 发送失败：${msg}`, 'red')
+      )
+    }
+
+    return { handled: true, reason: 'herdr_card_reply' }
+  }
+
+  private async handleHerdrCommand(
+    chatId: string,
+    rest: string
+  ): Promise<{ handled: boolean; reason: string }> {
+    if (!rest || rest === 'help') {
+      await this.sendPlainReply(
+        chatId,
+        [
+          '**`/t` 终端控制指令**：',
+          '- `/t ls` — 列出活跃终端',
+          '- `/t <地址或名称> <文本>` — 向终端发送消息',
+          '- `/t <地址或名称> <序号>` — 终端阻塞时按选项序号作答'
+        ].join('\n')
+      )
+      return { handled: true, reason: 'command_t_help' }
+    }
+
+    if (!this.herdrClient) {
+      await this.sendCardMessage(
+        chatId,
+        buildTextCard('终端控制', 'Herdr 服务未启用或未连接。', 'orange')
+      )
+      return { handled: true, reason: 'command_t_unavailable' }
+    }
+
+    if (rest === 'ls' || rest === 'list') {
+      try {
+        const listRes = await this.herdrClient.listTerminals()
+        if (!listRes.available) {
+          await this.sendCardMessage(
+            chatId,
+            buildTextCard('终端列表', `Herdr 当前不可用：${listRes.reason || '未连接'}`, 'orange')
+          )
+          return { handled: true, reason: 'command_t_ls_unavailable' }
+        }
+        const terminals = listRes.terminals || []
+        if (terminals.length === 0) {
+          await this.sendCardMessage(
+            chatId,
+            buildTextCard('终端列表 (0)', '当前没有活跃终端。', 'blue')
+          )
+          return { handled: true, reason: 'command_t_ls' }
+        }
+        const lines = terminals.map(t => {
+          const namePart = t.name ? ` (${t.name})` : ''
+          const agentPart = t.agent || t.status?.app || 'shell'
+          const statePart = t.status?.state || t.state
+          const msgPart = t.status?.msg ? ` · ${t.status.msg}` : ''
+          return `- \`${t.address}\`${namePart} | **${agentPart}** | \`${statePart}\` | turn=${t.turn} | \`${t.cwd}\`${msgPart}`
+        })
+        await this.sendCardMessage(
+          chatId,
+          buildTextCard(`终端列表 (${terminals.length})`, lines.join('\n'), 'blue')
+        )
+        return { handled: true, reason: 'command_t_ls' }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        await this.sendCardMessage(
+          chatId,
+          buildTextCard('终端列表失败', `获取终端列表失败：${msg}`, 'red')
+        )
+        return { handled: true, reason: 'command_t_ls_error' }
+      }
+    }
+
+    const match = rest.match(/^(\S+)\s+([\s\S]+)$/)
+    if (!match) {
+      await this.sendPlainReply(
+        chatId,
+        '用法：`/t <终端地址或名称> <文本或选项序号>`，或 `/t ls` 查看终端列表。'
+      )
+      return { handled: true, reason: 'command_t_usage' }
+    }
+
+    const target = match[1]
+    const payload = match[2].trim()
+    const terminalInfo = await this.resolveHerdrTerminalInfo(target)
+    const resolvedAddress = terminalInfo?.address || target
+
+    try {
+      if (terminalInfo?.status?.state === 'blocked' && /^[1-9]\d*$/.test(payload)) {
+        await this.herdrClient.answerTerminal(resolvedAddress, { choice: Number(payload) })
+        this.pushEvent('herdr_command', `/t ${resolvedAddress} answer=${payload}`)
+        await this.sendCardMessage(
+          chatId,
+          buildTextCard('终端已作答', `已向阻塞终端 \`${resolvedAddress}\` 提交选项 \`${payload}\`。`, 'green')
+        )
+        return { handled: true, reason: 'command_t_answer' }
+      }
+
+      const res = await this.herdrClient.sendTerminal(resolvedAddress, {
+        text: payload,
+        force: false
+      })
+      this.pushEvent('herdr_command', `/t ${resolvedAddress} turn=${res.turn}`)
+      await this.sendCardMessage(
+        chatId,
+        buildTextCard('终端已接收', `已发送到终端 \`${resolvedAddress}\`（turn=${res.turn}）。`, 'green')
+      )
+      return { handled: true, reason: 'command_t_send' }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      if (/blocked|阻塞/i.test(msg)) {
+        await this.sendCardMessage(
+          chatId,
+          buildTextCard(
+            '终端处于阻塞状态',
+            `终端 \`${resolvedAddress}\` 当前正在等待确认，请发送 \`/t ${resolvedAddress} <序号>\` 作答或点击通知卡片按钮。`,
+            'orange'
+          )
+        )
+      } else {
+        await this.sendCardMessage(
+          chatId,
+          buildTextCard('终端指令失败', `向终端 \`${resolvedAddress}\` 发送失败：${msg}`, 'red')
+        )
+      }
+      return { handled: true, reason: 'command_t_error' }
+    }
+  }
+
+  async sendHerdrNotificationCard(chatId: string, dto: HerdrNotificationDto): Promise<string | null> {
+    const cleanChatId = chatId.trim()
+    if (!cleanChatId) return null
+
+    const restClient = this.resolveRestClient()
+    if (!restClient) {
+      this.logger.warn(this.TAG, 'Skipped Feishu herdr notification card: Feishu not configured')
+      return null
+    }
+
+    const card = buildHerdrNotificationCard(dto)
+    const msgId = await this.sendCardMessage(cleanChatId, card, restClient)
+    if (msgId) {
+      this.trackHerdrNotificationCard(msgId, dto.address)
+      this.pushEvent('herdr_notification', `${dto.address} (${dto.kind}) -> ${cleanChatId}`)
+    }
+    return msgId
   }
 
   async deliverCronResult(chatId: string, jobName: string, content: string): Promise<void> {
     const cleanChatId = chatId.trim()
     if (!cleanChatId) return
 
-    let restClient = this.client
+    const restClient = this.resolveRestClient()
     if (!restClient) {
-      const cfg = this.db.getSettings().channels.feishu
-      const secret = this.db.getSecret('channels.feishu.app_secret')
-      if (!cfg.appId.trim() || !secret) {
-        throw new Error('飞书渠道未配置 App ID 或 App Secret，无法投递定时任务结果')
-      }
-      restClient = this.sdkFactory.createClient({
-        appId: cfg.appId.trim(),
-        appSecret: secret,
-        domain: cfg.domain
-      })
+      throw new Error('飞书渠道未配置 App ID 或 App Secret，无法投递定时任务结果')
     }
 
     const card = buildTextCard(`定时任务汇报 · ${jobName}`, content, 'indigo')

@@ -3,7 +3,7 @@ import { rmSync, writeFileSync } from 'node:fs'
 import { AddressInfo } from 'node:net'
 import { serve } from '@hono/node-server'
 import { WebSocketServer } from 'ws'
-import { WsClientMessage, WsClientMessageSchema } from '@shared/schemas'
+import { WsClientMessage, WsClientMessageSchema, HerdrClientLike } from '@shared/schemas'
 import { resolveAppPaths } from './paths'
 import { TaggedLogger } from './logger'
 import { SecretVault } from './crypto/vault'
@@ -18,6 +18,7 @@ import { GenerationEngine } from './engine/generation-engine'
 import { PortableUpdater } from './updater/portable-updater'
 import { CronScheduler } from './cron/scheduler'
 import { FeishuBridge, FeishuSdkFactory } from './channels/feishu'
+import { HerdrClient, HerdrFollowManager, HerdrNotifier } from './herdr'
 import { createHttpApp, ServerContext } from './app'
 
 export interface RunningDaemon {
@@ -32,6 +33,8 @@ export async function startLocalDaemon(opts?: {
   authToken?: string
   masterKeyHex?: string
   feishuSdkFactory?: FeishuSdkFactory
+  herdrClient?: HerdrClientLike
+  herdrExecPath?: string | null
   onRequestUpdateInstall?: (opts?: { dryRun?: boolean }) => Promise<boolean> | boolean
 }): Promise<RunningDaemon> {
   const envToken = process.env.CJH_LOCAL_TOKEN
@@ -136,6 +139,41 @@ export async function startLocalDaemon(opts?: {
   )
   const cronScheduler = new CronScheduler(db, engine, wsHub, logger, 15_000, feishuBridge)
 
+  let herdrFollowManagerRef: HerdrFollowManager | null = null
+  const shouldAutoStartHerdr =
+    Boolean(opts?.herdrClient) || opts?.herdrExecPath !== undefined || !process.env.VITEST
+  const herdrClient: HerdrClientLike =
+    opts?.herdrClient ||
+    new HerdrClient(db, logger, wsHub, {
+      execPathOverride:
+        opts?.herdrExecPath !== undefined
+          ? opts.herdrExecPath
+          : process.env.VITEST
+            ? '__vitest_herdr_disabled__'
+            : undefined,
+      getFollower: address => herdrFollowManagerRef?.getFollower(address)?.threadId ?? null
+    })
+
+  const herdrFollowManager = new HerdrFollowManager(herdrClient, wsHub, logger, {
+    triggerFollowTurn: (threadId, promptText) => {
+      engine.steerOrGenerate({
+        threadId,
+        userMessage: {
+          role: 'user',
+          parts: [{ type: 'text', text: promptText }]
+        },
+        source: 'herdr_follow'
+      })
+    }
+  })
+  herdrFollowManagerRef = herdrFollowManager
+
+  const herdrNotifier = new HerdrNotifier(db, wsHub, logger, herdrClient, {
+    feishuBridge
+  })
+  feishuBridge.setHerdrClient(herdrClient)
+  engine.setHerdrServices(herdrClient, herdrFollowManager)
+
   const ctx: ServerContext = {
     paths,
     authToken,
@@ -152,6 +190,8 @@ export async function startLocalDaemon(opts?: {
     updater,
     cronScheduler,
     feishuBridge,
+    herdrClient,
+    herdrFollowManager,
     requestUpdateInstall: opts?.onRequestUpdateInstall
   }
 
@@ -233,10 +273,17 @@ export async function startLocalDaemon(opts?: {
   void mcpHub.syncAllEnabled()
   cronScheduler.start()
   void feishuBridge.startIfEnabled()
+  herdrNotifier.start()
+  if (shouldAutoStartHerdr) {
+    void herdrClient.start()
+  }
 
   const shutdown = async () => {
     logger.info('Server', 'Shutting down daemon...')
     cronScheduler.stop()
+    herdrNotifier.dispose()
+    herdrFollowManager.dispose()
+    await herdrClient.dispose().catch(() => undefined)
     await feishuBridge.disconnect().catch(() => undefined)
     try {
       rmSync(paths.runtimeJsonPath, { force: true })

@@ -10,6 +10,8 @@ import { ZodError } from 'zod'
 import {
   CronJobUpsertSchema,
   DataImportRequestSchema,
+  HerdrClientLike,
+  HerdrFollowManagerLike,
   McpServerUpsertSchema,
   MemoryUpsertSchema,
   PromptTemplateUpsertSchema,
@@ -32,6 +34,7 @@ import { SkillsScanner } from './skills/scanner'
 import { PortableUpdater } from './updater/portable-updater'
 import { CronScheduler, computeNextRunAt, parseCronExpression, validateTimezone } from './cron/scheduler'
 import { FeishuBridge } from './channels/feishu'
+import { registerHerdrRoutes } from './herdr'
 import { fetchProviderRemoteModels, testApiProviderConnection } from './providers/ai-provider'
 import { resolveSafeWorkspacePath } from './tools/workspace-fs'
 
@@ -51,6 +54,8 @@ export interface ServerContext {
   updater: PortableUpdater
   cronScheduler: CronScheduler
   feishuBridge?: FeishuBridge
+  herdrClient?: HerdrClientLike
+  herdrFollowManager?: HerdrFollowManagerLike
   requestUpdateInstall?: (opts?: { dryRun?: boolean }) => Promise<boolean> | boolean
 }
 
@@ -158,6 +163,9 @@ export function createHttpApp(ctx: ServerContext): Hono {
       } else if (parsed.channels.feishu.enabled === false) {
         void ctx.feishuBridge.disconnect()
       }
+    }
+    if (parsed.herdr?.execPath !== undefined && ctx.herdrClient) {
+      void ctx.herdrClient.start()
     }
     return c.json(updated)
   })
@@ -425,6 +433,7 @@ export function createHttpApp(ctx: ServerContext): Hono {
     const id = c.req.param('id')
     ctx.engine.stopGeneration(id)
     ctx.acpManager.releaseThreadSession(id, 'thread deleted')
+    ctx.herdrFollowManager?.unfollowThread(id)
     const ok = ctx.db.deleteThread(id)
     if (ok) ctx.wsHub.broadcast('thread_deleted', { id })
     return c.json({ ok })
@@ -439,6 +448,7 @@ export function createHttpApp(ctx: ServerContext): Hono {
     for (const id of ids) {
       ctx.engine.stopGeneration(id)
       ctx.acpManager.releaseThreadSession(id, 'thread deleted')
+      ctx.herdrFollowManager?.unfollowThread(id)
     }
     const count = ctx.db.batchDeleteThreads(ids)
     for (const id of ids) ctx.wsHub.broadcast('thread_deleted', { id })
@@ -1040,6 +1050,17 @@ export function createHttpApp(ctx: ServerContext): Hono {
   app.get('/api/channels/feishu/chats', c => {
     return c.json(ctx.db.listKnownFeishuChats())
   })
+
+  // ==================== Herdr Terminal Workspace (R1 / R4) ====================
+
+  if (ctx.herdrClient) {
+    registerHerdrRoutes(app, {
+      herdrClient: ctx.herdrClient,
+      followManager: ctx.herdrFollowManager,
+      db: ctx.db,
+      wsHub: ctx.wsHub
+    })
+  }
 
   // Serve built renderer UI on `/` and `/assets/*` for local webview / headless preview
   const here = dirname(fileURLToPath(import.meta.url))

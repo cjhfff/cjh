@@ -9,6 +9,7 @@ import {
   ipcMain,
   Menu,
   nativeImage,
+  Notification,
   safeStorage,
   shell,
   Tray,
@@ -332,6 +333,36 @@ function registerIpcHandlers(): void {
       }
     ) => {
       return applyDesktopPrefs(prefs || {})
+    }
+  )
+
+  ipcMain.handle(
+    'cjh:show-notification',
+    (
+      _evt,
+      payload: {
+        title: string
+        body: string
+        terminalAddress?: string
+      }
+    ) => {
+      try {
+        if (!Notification.isSupported()) return false
+        const notif = new Notification({
+          title: payload?.title || 'cjh',
+          body: payload?.body || ''
+        })
+        notif.on('click', () => {
+          showAndFocusMainWindow()
+          if (payload?.terminalAddress && mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('cjh:focus-terminal', payload.terminalAddress)
+          }
+        })
+        notif.show()
+        return true
+      } catch {
+        return false
+      }
     }
   )
 }

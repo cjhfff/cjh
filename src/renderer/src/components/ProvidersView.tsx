@@ -122,6 +122,35 @@ const CODEX_ACP_TEMPLATE: ProviderUpsertInput = {
   sortOrder: 2
 }
 
+const ANTIGRAVITY_ACP_TEMPLATE: ProviderUpsertInput = {
+  id: 'antigravity-acp',
+  name: 'Antigravity / agy (ACP)',
+  type: 'acp',
+  apiFormat: 'openai-chat',
+  isResponseApi: false,
+  useMaxCompletionTokens: false,
+  acpPreset: 'antigravity',
+  acpCommand: 'agy',
+  acpArgs: ['acp'],
+  acpEnv: {},
+  acpMcpServerIds: [],
+  acpPermissionMode: 'default',
+  acpAvailableModes: [],
+  customHeaders: {},
+  models: [
+    {
+      id: 'agy',
+      name: 'Antigravity (agy)',
+      description: 'Antigravity (agy) ACP',
+      enabled: true,
+      capabilities: { vision: true, reasoning: true, streaming: true, functionCalling: true }
+    }
+  ],
+  availableModels: [],
+  enabled: true,
+  sortOrder: 3
+}
+
 export function ProvidersView() {
   const { t } = useTranslation()
   const qc = useQueryClient()
@@ -372,6 +401,27 @@ export function ProvidersView() {
               <button
                 onClick={() =>
                   createPresetMut.mutate({
+                    ...ANTIGRAVITY_ACP_TEMPLATE,
+                    name: t('provider.presetAntigravityAcpName'),
+                    models: [
+                      {
+                        ...ANTIGRAVITY_ACP_TEMPLATE.models[0],
+                        description: t('provider.presetAntigravityDesc')
+                      }
+                    ],
+                    id: providers.some(p => p.id === 'antigravity-acp')
+                      ? `antigravity-acp-${Date.now().toString().slice(-3)}`
+                      : 'antigravity-acp'
+                  })
+                }
+                className="py-2 px-3 rounded-xl bg-[var(--bg-surface)] hover:bg-[var(--bg-elevated)] border border-[var(--border-subtle)] font-medium flex items-center justify-center gap-1.5 col-span-2 transition text-[var(--text-primary)]"
+              >
+                <Zap className="w-3.5 h-3.5 text-[var(--accent)]" />
+                <span>{t('provider.presetAntigravityAcpName')}</span>
+              </button>
+              <button
+                onClick={() =>
+                  createPresetMut.mutate({
                     ...CODEX_ACP_TEMPLATE,
                     models: [{ ...CODEX_ACP_TEMPLATE.models[0], description: t('provider.presetCodexDesc') }],
                     id: providers.some(p => p.id === 'codex-acp')
@@ -521,6 +571,28 @@ export function ProvidersView() {
               >
                 <Zap className="w-3.5 h-3.5 text-[var(--warning)]" />
                 <span>{t('provider.emptyAddClaudeAcp')}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  createPresetMut.mutate({
+                    ...ANTIGRAVITY_ACP_TEMPLATE,
+                    name: t('provider.presetAntigravityAcpName'),
+                    models: [
+                      {
+                        ...ANTIGRAVITY_ACP_TEMPLATE.models[0],
+                        description: t('provider.presetAntigravityDesc')
+                      }
+                    ],
+                    id: providers.some(p => p.id === 'antigravity-acp')
+                      ? `antigravity-acp-${Date.now().toString().slice(-3)}`
+                      : 'antigravity-acp'
+                  })
+                }
+                className="px-4 py-2 rounded-xl bg-[var(--bg-surface)] hover:bg-[var(--bg-elevated)] border border-[var(--border-subtle)] text-xs font-medium inline-flex items-center gap-1.5 transition"
+              >
+                <Zap className="w-3.5 h-3.5 text-[var(--accent)]" />
+                <span>{t('provider.presetAntigravityAcpName')}</span>
               </button>
             </div>
           </div>

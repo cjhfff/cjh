@@ -1,17 +1,21 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Activity, Brain, Clock, Cpu, MessageSquare, Moon, PanelLeft, Plug, Radio, Sparkles, Sun } from 'lucide-react'
-import type {
-  AppSettings,
-  PendingPermissionRequestDto,
-  ProviderDto,
-  StoredMessageDto,
-  WsClientMessage
+import { Activity, Brain, Clock, Cpu, MessageSquare, Moon, PanelLeft, Plug, Radio, Sparkles, Sun, Terminal } from 'lucide-react'
+import {
+  HERDR_WS_EVENTS,
+  type AppSettings,
+  type HerdrNotificationDto,
+  type PendingPermissionRequestDto,
+  type ProviderDto,
+  type StoredMessageDto,
+  type WsClientMessage
 } from '@shared/schemas'
 import { apiFetch, DaemonWsClient, getDaemonConnection } from './lib/api'
 import { MainViewTab, useWorkspaceStore } from './store/workspace-store'
+import { useHerdrStore } from './store/herdr-store'
 import { ChatWorkspace } from './components/ChatWorkspace'
+import { TerminalsView } from './components/TerminalsView'
 import { ProvidersView } from './components/ProvidersView'
 import { ExtensionsView } from './components/ExtensionsView'
 import { ChannelsView } from './components/ChannelsView'
@@ -39,6 +43,12 @@ export function App() {
   const setThreadCommands = useWorkspaceStore(s => s.setThreadCommands)
   const setThreadMode = useWorkspaceStore(s => s.setThreadMode)
   const setThreadContextUsage = useWorkspaceStore(s => s.setThreadContextUsage)
+  const blockedTerminalCount = useHerdrStore(
+    s =>
+      Object.values(s.terminalsByAddress).filter(
+        term => term.state === 'live' && term.status?.state === 'blocked'
+      ).length
+  )
 
   const [isDark, setIsDark] = useState(true)
   const [sidebarOpen, setSidebarOpen] = useState(true)
@@ -106,7 +116,38 @@ export function App() {
   }, [isDark])
 
   useEffect(() => {
+    const offFocus = window.cjhShell?.onFocusTerminal?.((address: string) => {
+      useHerdrStore.getState().setSelectedAddress(address)
+      setActiveView('terminals')
+    })
+    return () => {
+      offFocus?.()
+    }
+  }, [setActiveView])
+
+  useEffect(() => {
     const client = new DaemonWsClient(evt => {
+      if (useHerdrStore.getState().handleWsEvent(evt)) {
+        if (evt.type === HERDR_WS_EVENTS.NOTIFICATION) {
+          const dto = evt.data as HerdrNotificationDto
+          if (dto?.title) {
+            if (window.cjhShell?.showNotification) {
+              void window.cjhShell.showNotification({
+                title: dto.title,
+                body: dto.body || '',
+                terminalAddress: dto.address
+              })
+            } else if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+              const n = new Notification(dto.title, { body: dto.body || '' })
+              n.onclick = () => {
+                useHerdrStore.getState().setSelectedAddress(dto.address)
+                setActiveView('terminals')
+              }
+            }
+          }
+        }
+        return
+      }
       switch (evt.type) {
         case 'message_added':
         case 'message_updated':
@@ -249,8 +290,14 @@ export function App() {
     void qc.invalidateQueries({ queryKey: ['settings'] })
   }
 
-  const tabs: Array<{ id: MainViewTab; label: string; icon: React.ReactNode }> = [
+  const tabs: Array<{ id: MainViewTab; label: string; icon: React.ReactNode; badge?: number }> = [
     { id: 'chat', label: t('nav.workspace'), icon: <MessageSquare className="w-3.5 h-3.5" /> },
+    {
+      id: 'terminals',
+      label: t('nav.terminals'),
+      icon: <Terminal className="w-3.5 h-3.5" />,
+      badge: blockedTerminalCount > 0 ? blockedTerminalCount : undefined
+    },
     { id: 'providers', label: t('nav.providers'), icon: <Cpu className="w-3.5 h-3.5" /> },
     { id: 'mcp', label: t('nav.extensions'), icon: <Plug className="w-3.5 h-3.5" /> },
     { id: 'memory', label: t('nav.memory'), icon: <Brain className="w-3.5 h-3.5" /> },
@@ -297,6 +344,11 @@ export function App() {
               >
                 <span className={active ? 'text-[var(--accent)]' : ''}>{tab.icon}</span>
                 <span>{tab.label}</span>
+                {tab.badge ? (
+                  <span className="px-1.5 py-0.2 rounded-full bg-[var(--danger)] text-white text-[10px] leading-4 font-semibold">
+                    {tab.badge}
+                  </span>
+                ) : null}
               </button>
             )
           })}
@@ -321,6 +373,7 @@ export function App() {
       </header>
 
       {activeView === 'chat' && <ChatWorkspace sendWs={sendWs} sidebarOpen={sidebarOpen} />}
+      {activeView === 'terminals' && <TerminalsView />}
       {activeView === 'providers' && <ProvidersView />}
       {activeView === 'mcp' && <ExtensionsView />}
       {activeView === 'memory' && <MemoryView />}

@@ -17,6 +17,12 @@ export interface CjhShellBridge {
     globalShortcutEnabled?: boolean
     globalShortcut?: string
   }) => Promise<{ shortcutRegistered: boolean; accelerator: string }>
+  showNotification: (payload: {
+    title: string
+    body: string
+    terminalAddress?: string
+  }) => Promise<boolean>
+  onFocusTerminal: (cb: (address: string) => void) => () => void
 }
 
 declare global {

@@ -668,6 +668,22 @@ export class AppDatabase {
         : {}),
       ...(patch.channels?.feishu?.domain !== undefined
         ? { domain: patch.channels.feishu.domain }
+        : {}),
+      ...(patch.channels?.feishu?.notifyChatId !== undefined
+        ? { notifyChatId: patch.channels.feishu.notifyChatId }
+        : {})
+    }
+    const nextHerdr = {
+      ...current.herdr,
+      ...(patch.herdr?.execPath !== undefined ? { execPath: patch.herdr.execPath } : {}),
+      ...(patch.herdr?.agentCommands !== undefined
+        ? { agentCommands: patch.herdr.agentCommands }
+        : {}),
+      ...(patch.herdr?.mutedTerminals !== undefined
+        ? { mutedTerminals: patch.herdr.mutedTerminals }
+        : {}),
+      ...(patch.herdr?.desktopNotifications !== undefined
+        ? { desktopNotifications: patch.herdr.desktopNotifications }
         : {})
     }
     const merged = SettingsSchema.parse({
@@ -692,6 +708,7 @@ export class AppDatabase {
       channels: {
         feishu: nextFeishu
       },
+      herdr: nextHerdr,
       update: { ...current.update, ...(patch.update || {}) }
     })
     this.sqlite

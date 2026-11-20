@@ -28,7 +28,25 @@ const cjhShell = {
     globalShortcutEnabled?: boolean
     globalShortcut?: string
   }): Promise<{ shortcutRegistered: boolean; accelerator: string }> =>
-    ipcRenderer.invoke('cjh:sync-desktop-prefs', prefs)
+    ipcRenderer.invoke('cjh:sync-desktop-prefs', prefs),
+
+  showNotification: (payload: {
+    title: string
+    body: string
+    terminalAddress?: string
+  }): Promise<boolean> => ipcRenderer.invoke('cjh:show-notification', payload),
+
+  onFocusTerminal: (cb: (address: string) => void): (() => void) => {
+    const handler = (_evt: unknown, address: string) => {
+      if (typeof address === 'string' && address) cb(address)
+    }
+    ipcRenderer.on('cjh:focus-terminal', handler)
+    return () => {
+      ipcRenderer.off('cjh:focus-terminal', handler)
+    }
+  }
 }
+
+export type CjhShellBridge = typeof cjhShell
 
 contextBridge.exposeInMainWorld('cjhShell', cjhShell)

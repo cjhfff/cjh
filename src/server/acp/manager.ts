@@ -1,5 +1,7 @@
 import { ChildProcess } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 import { nanoid } from 'nanoid'
 import {
@@ -26,9 +28,9 @@ const ACP_INIT_TIMEOUT_MS = 60_000
 const ACP_SESSION_TIMEOUT_MS = 60_000
 const DEFAULT_ACP_SESSION_IDLE_MS = 30 * 60_000
 
-const PRESET_PACKAGES: Record<
+export const PRESET_PACKAGES: Record<
   string,
-  { alias: string; npmPkg: string; extraArgs?: string[]; cliBinary?: string }
+  { alias: string; npmPkg?: string; extraArgs?: string[]; cliBinary?: string }
 > = {
   claude: {
     alias: 'claude-agent-acp',
@@ -45,7 +47,125 @@ const PRESET_PACKAGES: Record<
     npmPkg: '@google/gemini-cli',
     extraArgs: ['--experimental-acp'],
     cliBinary: 'gemini'
+  },
+  antigravity: {
+    alias: 'agy',
+    extraArgs: ['acp'],
+    cliBinary: 'agy'
   }
+}
+
+export interface AcpLaunchSpec {
+  command: string
+  args: string[]
+  extraEnv: Record<string, string>
+  borrowedAuth: { kind: 'anthropic' | 'openai'; apiKey: string; baseUrl?: string | null } | null
+}
+
+export interface AcpResolveLaunchDeps {
+  db?: AppDatabase
+  platform?: NodeJS.Platform
+  homeDir?: string
+  fileExists?: (path: string) => boolean
+  findInPath?: (command: string) => string | null
+}
+
+export function resolveAntigravityExecutable(opts?: {
+  acpExecutablePath?: string | null
+  acpCommand?: string | null
+  platform?: NodeJS.Platform
+  homeDir?: string
+  fileExists?: (path: string) => boolean
+  findInPath?: (command: string) => string | null
+}): string {
+  const platform = opts?.platform ?? process.platform
+  const homeDir = opts?.homeDir ?? homedir()
+  const fileExists = opts?.fileExists ?? existsSync
+  const findInPath = opts?.findInPath ?? ((cmd: string) => findExecutableInPath(cmd))
+
+  if (opts?.acpExecutablePath?.trim()) {
+    return opts.acpExecutablePath.trim()
+  }
+
+  const customCmd = opts?.acpCommand?.trim()
+  if (platform === 'win32' && (!customCmd || customCmd === 'agy')) {
+    const winDefault = join(homeDir, '.gemini', 'bin', 'agy.exe')
+    if (fileExists(winDefault)) {
+      return winDefault
+    }
+  }
+
+  const target = customCmd || 'agy'
+  return findInPath(target) || target
+}
+
+export function resolveAcpLaunchSpec(
+  provider: ProviderDto,
+  deps?: AcpResolveLaunchDeps
+): AcpLaunchSpec {
+  const preset = provider.acpPreset ? PRESET_PACKAGES[provider.acpPreset] : null
+  const isAntigravity = provider.acpPreset === 'antigravity'
+  const baseCmd = (provider.acpCommand || preset?.alias || '').trim()
+  if (!baseCmd && !(isAntigravity && provider.acpExecutablePath?.trim())) {
+    throw new Error(`ACP Provider "${provider.name}" 未配置启动命令`)
+  }
+
+  const extraEnv: Record<string, string> = { ...(provider.acpEnv || {}) }
+  if (
+    provider.acpExecutablePath &&
+    (provider.acpPreset === 'claude' || (!isAntigravity && /claude/i.test(baseCmd)))
+  ) {
+    extraEnv.CLAUDE_CODE_EXECUTABLE = provider.acpExecutablePath
+  }
+
+  let borrowedAuth: AcpLaunchSpec['borrowedAuth'] = null
+  if (provider.acpApiProviderId && deps?.db) {
+    const targetProv = deps.db.getProvider(provider.acpApiProviderId)
+    const targetKey = deps.db.getProviderSecretKey(provider.acpApiProviderId)
+    if (targetProv && targetKey) {
+      const isClaude =
+        provider.acpPreset === 'claude' ||
+        /claude/i.test(baseCmd) ||
+        targetProv.apiFormat === 'anthropic' ||
+        targetProv.type === 'anthropic'
+      borrowedAuth = {
+        kind: isClaude ? 'anthropic' : 'openai',
+        apiKey: targetKey,
+        baseUrl: targetProv.baseUrl
+      }
+    }
+  }
+
+  const userArgs = [...(preset?.extraArgs || []), ...(provider.acpArgs || [])]
+
+  if (isAntigravity) {
+    const command = resolveAntigravityExecutable({
+      acpExecutablePath: provider.acpExecutablePath,
+      acpCommand: provider.acpCommand,
+      platform: deps?.platform,
+      homeDir: deps?.homeDir,
+      fileExists: deps?.fileExists,
+      findInPath: deps?.findInPath
+    })
+    return { command, args: userArgs, extraEnv, borrowedAuth }
+  }
+
+  const findInPath = deps?.findInPath ?? ((cmd: string) => findExecutableInPath(cmd))
+  const inPath = findInPath(baseCmd)
+  if (inPath) {
+    return { command: inPath, args: userArgs, extraEnv, borrowedAuth }
+  }
+
+  if (preset?.npmPkg) {
+    return {
+      command: 'npx',
+      args: ['-y', preset.npmPkg, ...userArgs],
+      extraEnv,
+      borrowedAuth
+    }
+  }
+
+  return { command: baseCmd, args: userArgs, extraEnv, borrowedAuth }
 }
 
 export interface AcpToolCallUpdatePatch {
@@ -230,7 +350,16 @@ export class AcpAgentManager {
 
     const preset = provider.acpPreset ? PRESET_PACKAGES[provider.acpPreset] : null
     const cmdName = provider.acpCommand || preset?.alias || ''
-    const resolvedAdapter = cmdName ? findExecutableInPath(cmdName, undefined, bypassCache) : null
+    let resolvedAdapter = cmdName ? findExecutableInPath(cmdName, undefined, bypassCache) : null
+    if (!resolvedAdapter && provider.acpPreset === 'antigravity') {
+      const candidate = resolveAntigravityExecutable({
+        acpCommand: provider.acpCommand,
+        findInPath: cmd => findExecutableInPath(cmd, undefined, bypassCache)
+      })
+      if (existsSync(candidate)) {
+        resolvedAdapter = candidate
+      }
+    }
 
     const cliName = preset?.cliBinary
     const resolvedCli = cliName ? findExecutableInPath(cliName, undefined, bypassCache) : null
@@ -246,7 +375,7 @@ export class AcpAgentManager {
       }
     }
 
-    if (preset) {
+    if (preset?.npmPkg) {
       return {
         activeSource: 'npx',
         resolvedPath: resolvedCli,
@@ -265,63 +394,8 @@ export class AcpAgentManager {
     }
   }
 
-  private resolveLaunchSpec(provider: ProviderDto): {
-    command: string
-    args: string[]
-    extraEnv: Record<string, string>
-    borrowedAuth: { kind: 'anthropic' | 'openai'; apiKey: string; baseUrl?: string | null } | null
-  } {
-    const preset = provider.acpPreset ? PRESET_PACKAGES[provider.acpPreset] : null
-    const baseCmd = (provider.acpCommand || preset?.alias || '').trim()
-    if (!baseCmd) {
-      throw new Error(`ACP Provider "${provider.name}" 未配置启动命令`)
-    }
-
-    const extraEnv: Record<string, string> = { ...(provider.acpEnv || {}) }
-    if (provider.acpExecutablePath && (provider.acpPreset === 'claude' || /claude/i.test(baseCmd))) {
-      extraEnv.CLAUDE_CODE_EXECUTABLE = provider.acpExecutablePath
-    }
-
-    let borrowedAuth: {
-      kind: 'anthropic' | 'openai'
-      apiKey: string
-      baseUrl?: string | null
-    } | null = null
-
-    if (provider.acpApiProviderId) {
-      const targetProv = this.db.getProvider(provider.acpApiProviderId)
-      const targetKey = this.db.getProviderSecretKey(provider.acpApiProviderId)
-      if (targetProv && targetKey) {
-        const isClaude =
-          provider.acpPreset === 'claude' ||
-          /claude/i.test(baseCmd) ||
-          targetProv.apiFormat === 'anthropic' ||
-          targetProv.type === 'anthropic'
-        borrowedAuth = {
-          kind: isClaude ? 'anthropic' : 'openai',
-          apiKey: targetKey,
-          baseUrl: targetProv.baseUrl
-        }
-      }
-    }
-
-    const inPath = findExecutableInPath(baseCmd)
-    const userArgs = [...(preset?.extraArgs || []), ...(provider.acpArgs || [])]
-
-    if (inPath) {
-      return { command: inPath, args: userArgs, extraEnv, borrowedAuth }
-    }
-
-    if (preset) {
-      return {
-        command: 'npx',
-        args: ['-y', preset.npmPkg, ...userArgs],
-        extraEnv,
-        borrowedAuth
-      }
-    }
-
-    return { command: baseCmd, args: userArgs, extraEnv, borrowedAuth }
+  resolveLaunchSpec(provider: ProviderDto): AcpLaunchSpec {
+    return resolveAcpLaunchSpec(provider, { db: this.db })
   }
 
   private clearIdleTimer(session: ActiveAcpSession): void {

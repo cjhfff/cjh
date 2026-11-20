@@ -1,3 +1,4 @@
+import { runTermCommand } from './herdr-cli'
 import { resolveCliTarget } from './runtime'
 
 export interface CliIo {
@@ -27,7 +28,7 @@ async function apiRequest(path: string, init?: RequestInit): Promise<any> {
   return res.json()
 }
 
-const BOOLEAN_FLAGS = new Set(['wait', 'w', 'disabled', 'help', 'h'])
+const BOOLEAN_FLAGS = new Set(['wait', 'w', 'disabled', 'help', 'h', 'all', 'force', 'arrows'])
 const VALUE_FLAGS = new Set([
   't',
   'thread',
@@ -47,7 +48,11 @@ const VALUE_FLAGS = new Set([
   'c',
   'tags',
   'days',
-  'd'
+  'd',
+  'cwd',
+  'lines',
+  'text',
+  'follow'
 ])
 
 function getStringFlag(flags: Record<string, string | boolean>, ...keys: string[]): string {
@@ -137,7 +142,16 @@ function printHelp(io: CliIo): void {
       '  cjh memory search <q>                            检索记忆',
       '  cjh memory list                                  列出记忆',
       '  cjh usage [--days 30]                            查询用量统计',
-      '  cjh config [set <key> <value>]                   查看或修改全局设置'
+      '  cjh config [set <key> <value>]                   查看或修改全局设置',
+      '  cjh term ls [--all]                              列出 herdr 终端',
+      '  cjh term read <t> [--lines N]                    读取 herdr 终端屏幕',
+      '  cjh term run <agent> [--cwd dir] [--name n] [--follow <threadId>] [task]',
+      '                                                   后台启动 herdr 终端',
+      '  cjh term send <t> [--force] [--wait] [--follow <threadId>] <text>',
+      '                                                   向 herdr 终端发送消息',
+      '  cjh term answer <t> <n|--text str> [--arrows]    回答阻塞中的 herdr 终端',
+      '  cjh term follow <t> --thread <id>                绑定线程自动跟进终端',
+      '  cjh term unfollow <t>                            取消终端跟进'
     ].join('\n')
   )
 }
@@ -404,6 +418,16 @@ export async function runCli(argv: string[], io: CliIo = defaultIo): Promise<voi
         const cfg = await apiRequest('/api/settings')
         io.log(JSON.stringify(cfg, null, 2))
       }
+      break
+    }
+
+    case 'term': {
+      await runTermCommand(rest, {
+        io,
+        apiRequest,
+        parseFlags,
+        getStringFlag
+      })
       break
     }
 

@@ -47,10 +47,18 @@ export function ChannelsView() {
     queryFn: () => apiFetch('/api/channels/feishu/mappings')
   })
 
+  const { data: feishuChats = [] } = useQuery<
+    Array<{ chatId: string; chatType: string; updatedAt: number }>
+  >({
+    queryKey: ['feishu-chats'],
+    queryFn: () => apiFetch('/api/channels/feishu/chats')
+  })
+
   const [enabled, setEnabled] = useState(false)
   const [appId, setAppId] = useState('')
   const [appSecret, setAppSecret] = useState('')
   const [domain, setDomain] = useState<'feishu' | 'lark'>('feishu')
+  const [notifyChatId, setNotifyChatId] = useState('')
   const [savedBanner, setSavedBanner] = useState(false)
 
   useEffect(() => {
@@ -58,6 +66,7 @@ export function ChannelsView() {
     setEnabled(settings.channels.feishu.enabled)
     setAppId(settings.channels.feishu.appId || '')
     setDomain(settings.channels.feishu.domain || 'feishu')
+    setNotifyChatId(settings.channels.feishu.notifyChatId || '')
   }, [settings])
 
   const saveMut = useMutation({
@@ -65,7 +74,8 @@ export function ChannelsView() {
       const feishuPatch: Record<string, unknown> = {
         enabled,
         appId: appId.trim(),
-        domain
+        domain,
+        notifyChatId: notifyChatId.trim()
       }
       if (appSecret.trim()) {
         feishuPatch.appSecret = appSecret.trim()
@@ -245,6 +255,36 @@ export function ChannelsView() {
                   { value: 'lark', label: t('channels.domainLark') }
                 ]}
                 className="w-full"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="font-medium text-[var(--text-secondary)]">
+              {t('channels.notifyChatLabel')}
+            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {feishuChats.length > 0 && (
+                <CustomSelect
+                  value={feishuChats.some(c => c.chatId === notifyChatId) ? notifyChatId : ''}
+                  onChange={setNotifyChatId}
+                  options={[
+                    { value: '', label: t('channels.notifyChatNone') },
+                    ...feishuChats.map(c => ({
+                      value: c.chatId,
+                      label: `${c.chatType} · ${c.chatId}`
+                    }))
+                  ]}
+                  className="w-full"
+                />
+              )}
+              <input
+                value={notifyChatId}
+                onChange={e => setNotifyChatId(e.target.value)}
+                placeholder={t('channels.notifyChatPlaceholder')}
+                className={`w-full px-3.5 py-2 rounded-xl bg-[var(--bg-canvas)] border border-[var(--border-subtle)] font-mono outline-none focus:border-[var(--accent)] ${
+                  feishuChats.length === 0 ? 'sm:col-span-2' : ''
+                }`}
               />
             </div>
           </div>

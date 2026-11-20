@@ -13,6 +13,8 @@ import {
 import { nanoid } from 'nanoid'
 import {
   GenerateRequestData,
+  HerdrClientLike,
+  HerdrFollowManagerLike,
   MessagePart,
   StoredMessageDto,
   ThreadRuntimeStatus,
@@ -40,6 +42,8 @@ interface ActiveGenerationState {
 export class GenerationEngine {
   private active = new Map<string, ActiveGenerationState>()
   private permissionGate: PermissionGate
+  private herdrClient?: HerdrClientLike
+  private followManager?: HerdrFollowManagerLike
 
   constructor(
     private db: AppDatabase,
@@ -67,6 +71,14 @@ export class GenerationEngine {
           this.notifyPermissionStateChanged(payload.threadId)
         }
       )
+  }
+
+  setHerdrServices(
+    herdrClient?: HerdrClientLike,
+    followManager?: HerdrFollowManagerLike
+  ): void {
+    this.herdrClient = herdrClient
+    this.followManager = followManager
   }
 
   getThreadStatus = (threadId: string): ThreadRuntimeStatus => {
@@ -498,6 +510,8 @@ export class GenerationEngine {
               permissionGate: this.permissionGate,
               skillsScanner: this.skillsScanner,
               memoryStore: this.memoryStore,
+              herdrClient: this.herdrClient,
+              followManager: this.followManager,
               thread,
               providerId: provider.id,
               abortSignal: abortController.signal,

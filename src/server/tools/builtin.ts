@@ -1,13 +1,19 @@
 import { readFileSync } from 'node:fs'
 import { tool, type ToolSet } from 'ai'
 import { z } from 'zod'
-import { PermissionOptionDto, ThreadDto } from '@shared/schemas'
+import {
+  HerdrClientLike,
+  HerdrFollowManagerLike,
+  PermissionOptionDto,
+  ThreadDto
+} from '@shared/schemas'
 import { computeNextRunAt, parseCronExpression, validateTimezone } from '../cron/scheduler'
 import { AppDatabase } from '../db/database'
 import { MemoryStore } from '../memory/store'
 import { isAllowPermissionOption, PermissionGate } from '../permissions/gate'
 import { SkillsScanner } from '../skills/scanner'
 import { WsHub } from '../ws-hub'
+import { buildHerdrToolSet, formatHerdrToolTitle } from './herdr-tools'
 import { executeShellCommand } from './shell'
 import { webFetch, webSearch } from './web'
 import {
@@ -25,6 +31,8 @@ export interface BuiltinToolContext {
   permissionGate: PermissionGate
   skillsScanner: SkillsScanner
   memoryStore?: MemoryStore
+  herdrClient?: HerdrClientLike
+  followManager?: HerdrFollowManagerLike
   thread: ThreadDto
   providerId: string
   abortSignal?: AbortSignal
@@ -36,6 +44,8 @@ export interface BuiltinToolContext {
 }
 
 export function formatBuiltinToolTitle(toolName: string, input: unknown): string {
+  const herdrTitle = formatHerdrToolTitle(toolName, input)
+  if (herdrTitle) return herdrTitle
   if (!input || typeof input !== 'object') return toolName
   const obj = input as Record<string, unknown>
   if (typeof obj.path === 'string' && obj.path) return `${toolName} · ${obj.path}`
@@ -382,6 +392,15 @@ export function buildBuiltinToolSet(ctx: BuiltinToolContext): ToolSet {
               )
           })
         }
+      : {}),
+
+    ...(ctx.herdrClient
+      ? buildHerdrToolSet({
+          herdrClient: ctx.herdrClient,
+          followManager: ctx.followManager,
+          thread: ctx.thread,
+          runWithPermission
+        })
       : {})
   }
 }

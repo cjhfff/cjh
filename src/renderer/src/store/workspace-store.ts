@@ -8,7 +8,15 @@ import type {
   ThreadRuntimeStatus
 } from '@shared/schemas'
 
-export type MainViewTab = 'chat' | 'providers' | 'mcp' | 'memory' | 'cron' | 'channels' | 'system'
+export type MainViewTab =
+  | 'chat'
+  | 'terminals'
+  | 'providers'
+  | 'mcp'
+  | 'memory'
+  | 'cron'
+  | 'channels'
+  | 'system'
 
 interface ThreadModeState {
   currentModeId: string
